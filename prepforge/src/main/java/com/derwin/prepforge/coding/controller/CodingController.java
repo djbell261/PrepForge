@@ -2,6 +2,7 @@ package com.derwin.prepforge.coding.controller;
 
 import com.derwin.prepforge.coding.dto.*;
 import com.derwin.prepforge.coding.service.CodingService;
+import com.derwin.prepforge.summary.dto.SessionSummaryResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -40,6 +41,11 @@ public class CodingController {
     @GetMapping("/sessions/{sessionId}")
     public ResponseEntity<CodingSessionDetailResponse> getSessionDetail(@PathVariable UUID sessionId) {
         return ResponseEntity.ok(codingService.getSessionDetail(sessionId));
+    }
+
+    @GetMapping("/sessions/{sessionId}/summary")
+    public ResponseEntity<SessionSummaryResponse> getSessionSummary(@PathVariable UUID sessionId) {
+        return ResponseEntity.ok(codingService.getSessionSummary(sessionId));
     }
 
     @PutMapping("/sessions/{sessionId}/strategy")

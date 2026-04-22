@@ -45,6 +45,8 @@ function SessionDetailPage() {
   const [improvedResult, setImprovedResult] = useState(null);
   const [improveError, setImproveError] = useState("");
   const [isImproving, setIsImproving] = useState(false);
+  const [sessionSummary, setSessionSummary] = useState(null);
+  const [summaryError, setSummaryError] = useState("");
   const [now, setNow] = useState(Date.now());
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -122,6 +124,22 @@ function SessionDetailPage() {
     }
   };
 
+  const loadSummary = async () => {
+    setSummaryError("");
+
+    try {
+      const response = await codingService.getSessionSummary(sessionId);
+      setSessionSummary(response);
+    } catch (requestError) {
+      setSummaryError(
+        extractApiErrorMessage(
+          requestError,
+          "We couldn't load your session summary right now.",
+        ),
+      );
+    }
+  };
+
   const loadApproachComparison = async () => {
     setApproachComparisonError("");
     setIsComparingApproach(true);
@@ -153,6 +171,7 @@ function SessionDetailPage() {
     try {
       const response = await codingService.saveStrategy(sessionId, payload);
       setStrategy(response);
+      await loadSummary();
     } catch (requestError) {
       setStrategyError(
         extractApiErrorMessage(
@@ -163,6 +182,11 @@ function SessionDetailPage() {
     } finally {
       setIsSavingStrategy(false);
     }
+  };
+
+  const handleRefreshSession = async () => {
+    await loadDetail();
+    await loadSummary();
   };
 
   const handleEvaluateStrategy = async (payload) => {
@@ -192,6 +216,7 @@ function SessionDetailPage() {
     }
 
     loadDetail();
+    loadSummary();
   }, [sessionId, token, isAuthenticated]);
 
   useEffect(() => {
@@ -269,6 +294,7 @@ function SessionDetailPage() {
       setImprovedResult(null);
       setImproveError("");
       await loadDetail();
+      await loadSummary();
     } catch (requestError) {
       setSubmitError(
         extractApiErrorMessage(
@@ -337,7 +363,7 @@ function SessionDetailPage() {
       <div className="space-y-4">
         <EmptyState title="Session unavailable" description={error} />
         <div className="flex justify-center">
-          <Button onClick={loadDetail} variant="ghost">
+          <Button onClick={handleRefreshSession} variant="ghost">
             Retry session load
           </Button>
         </div>
@@ -495,7 +521,7 @@ function SessionDetailPage() {
               <Button disabled={isSubmitting || sessionExpired || !submissionForm.solutionCode.trim()} type="submit">
                 {sessionExpired ? "Submission Closed" : isSubmitting ? "Submitting for review..." : "Submit Code"}
               </Button>
-              <Button onClick={loadDetail} type="button" variant="ghost">
+              <Button onClick={handleRefreshSession} type="button" variant="ghost">
                 Refresh Session
               </Button>
             </div>
@@ -586,6 +612,34 @@ function SessionDetailPage() {
             </div>
           )}
         </div>
+      </section>
+
+      <section className="panel p-6">
+        <p className="text-xs uppercase tracking-[0.3em] text-ember-300">Session Summary</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Your final coaching block</h2>
+        {summaryError ? (
+          <p className="mt-5 rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-300">{summaryError}</p>
+        ) : null}
+        {sessionSummary ? (
+          <div className="mt-6 grid gap-5 xl:grid-cols-[1.15fr,0.85fr]">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Summary</p>
+              <p className="mt-3 text-sm leading-7 text-slate-300">{sessionSummary.summary}</p>
+            </div>
+            <div className="grid gap-4">
+              <SummaryListCard title="What Went Well" items={sessionSummary.strengths} />
+              <SummaryListCard title="What Went Wrong" items={sessionSummary.weaknesses} />
+              <SummaryListCard title="What To Practice Next" items={sessionSummary.nextSteps} />
+            </div>
+          </div>
+        ) : (
+          <div className="mt-6">
+            <EmptyState
+              title="Summary warming up"
+              description="Your coaching summary will appear here once this session has enough signal to summarize."
+            />
+          </div>
+        )}
       </section>
 
       {latestFeedback ? (
@@ -749,6 +803,25 @@ function DetailRow({ label, value, mono = false }) {
     <div className="flex items-start justify-between gap-4">
       <span className="text-slate-500">{label}</span>
       <span className={`text-right text-slate-200 ${mono ? "font-mono text-xs sm:text-sm" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
+function SummaryListCard({ title, items }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <p className="font-semibold text-white">{title}</p>
+      {Array.isArray(items) && items.length ? (
+        <ul className="mt-3 space-y-2">
+          {items.map((item) => (
+            <li key={item} className="rounded-xl bg-black/20 px-3 py-2 text-sm leading-7 text-slate-300">
+              {item}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm text-slate-500">No summary points yet.</p>
+      )}
     </div>
   );
 }

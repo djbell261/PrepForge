@@ -9,4 +9,6 @@ public interface BehavioralSubmissionRepository extends JpaRepository<Behavioral
     List<BehavioralSubmission> findBySessionIdOrderBySubmittedAtDesc(UUID sessionId);
 
     List<BehavioralSubmission> findByUserIdOrderBySubmittedAtDesc(UUID userId);
+
+    java.util.Optional<BehavioralSubmission> findByIdAndUserId(UUID id, UUID userId);
 }

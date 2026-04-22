@@ -11,6 +11,7 @@ import com.derwin.prepforge.behavioral.dto.BehavioralSessionResponse;
 import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionResponse;
 import com.derwin.prepforge.behavioral.service.BehavioralService;
+import com.derwin.prepforge.summary.dto.SessionSummaryResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -49,6 +50,11 @@ public class BehavioralController {
     @GetMapping("/sessions/{sessionId}")
     public ResponseEntity<BehavioralSessionDetailResponse> getSessionDetail(@PathVariable UUID sessionId) {
         return ResponseEntity.ok(behavioralService.getSessionDetail(sessionId));
+    }
+
+    @GetMapping("/sessions/{sessionId}/summary")
+    public ResponseEntity<SessionSummaryResponse> getSessionSummary(@PathVariable UUID sessionId) {
+        return ResponseEntity.ok(behavioralService.getSessionSummary(sessionId));
     }
 
     @PostMapping("/sessions/{sessionId}/submissions")

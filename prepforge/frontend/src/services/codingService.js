@@ -26,6 +26,11 @@ export const codingService = {
     return data;
   },
 
+  async getSessionSummary(sessionId) {
+    const { data } = await apiClient.get(`/api/v1/coding/sessions/${sessionId}/summary`);
+    return data;
+  },
+
   async saveStrategy(sessionId, payload) {
     const { data } = await apiClient.put(`/api/v1/coding/sessions/${sessionId}/strategy`, payload);
     return data;

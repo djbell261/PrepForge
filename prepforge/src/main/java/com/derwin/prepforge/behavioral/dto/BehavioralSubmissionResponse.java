@@ -17,5 +17,8 @@ public class BehavioralSubmissionResponse {
     private UUID submissionId;
     private String responseText;
     private BehavioralFeedbackResponse feedback;
+    private BehavioralSubmissionFeedbackStatus feedbackStatus;
+    private UUID feedbackJobId;
+    private String feedbackFailureMessage;
     private Instant submittedAt;
 }

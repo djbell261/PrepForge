@@ -1,6 +1,10 @@
 package com.derwin.prepforge.behavioral.service;
 
+import com.derwin.prepforge.analytics.cache.AnalyticsCacheService;
+import com.derwin.prepforge.analytics.cache.AnalyticsCacheType;
 import com.derwin.prepforge.auth.entity.User;
+import com.derwin.prepforge.common.ratelimit.AiEndpointCategory;
+import com.derwin.prepforge.common.ratelimit.AiRateLimitService;
 import com.derwin.prepforge.behavioral.dto.BehavioralImproveRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralImproveResponse;
 import com.derwin.prepforge.behavioral.dto.BehavioralAnalyticsResponse;
@@ -9,6 +13,7 @@ import com.derwin.prepforge.behavioral.dto.BehavioralQuestionResponse;
 import com.derwin.prepforge.behavioral.dto.BehavioralSessionDetailResponse;
 import com.derwin.prepforge.behavioral.dto.BehavioralSessionRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralSessionResponse;
+import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionFeedbackStatus;
 import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionCreateRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionResponse;
@@ -23,6 +28,11 @@ import com.derwin.prepforge.coding.service.AiService;
 import com.derwin.prepforge.infrastructure.redis.TimedSessionType;
 import com.derwin.prepforge.infrastructure.redis.TimerState;
 import com.derwin.prepforge.infrastructure.redis.TimerStateStore;
+import com.derwin.prepforge.jobs.AsyncJob;
+import com.derwin.prepforge.jobs.AsyncJobService;
+import com.derwin.prepforge.jobs.AsyncJobStatus;
+import com.derwin.prepforge.summary.SessionSummaryService;
+import com.derwin.prepforge.summary.dto.SessionSummaryResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -47,9 +57,13 @@ public class BehavioralService {
     private final BehavioralQuestionRepository behavioralQuestionRepository;
     private final BehavioralSessionRepository behavioralSessionRepository;
     private final BehavioralSubmissionRepository behavioralSubmissionRepository;
+    private final AnalyticsCacheService analyticsCacheService;
     private final AiService aiService;
+    private final AiRateLimitService aiRateLimitService;
+    private final AsyncJobService asyncJobService;
     private final ObjectMapper objectMapper;
     private final TimerStateStore timerStateStore;
+    private final SessionSummaryService sessionSummaryService;
 
     @Transactional(readOnly = true)
     public List<BehavioralQuestionResponse> getQuestions() {
@@ -61,6 +75,14 @@ public class BehavioralService {
     @Transactional(readOnly = true)
     public BehavioralAnalyticsResponse getAnalytics() {
         UUID userId = getCurrentUser().getId();
+        return analyticsCacheService.getOrLoad(
+                userId,
+                AnalyticsCacheType.BEHAVIORAL_SUMMARY,
+                BehavioralAnalyticsResponse.class,
+                () -> computeAnalytics(userId));
+    }
+
+    private BehavioralAnalyticsResponse computeAnalytics(UUID userId) {
         List<BehavioralSubmission> submissions = behavioralSubmissionRepository.findByUserIdOrderBySubmittedAtDesc(userId);
 
         if (submissions.isEmpty()) {
@@ -161,6 +183,11 @@ public class BehavioralService {
                 .build();
     }
 
+    @Transactional(readOnly = true)
+    public SessionSummaryResponse getSessionSummary(UUID sessionId) {
+        return sessionSummaryService.getBehavioralSummary(sessionId);
+    }
+
     @Transactional
     public BehavioralSubmissionResponse submitResponse(UUID sessionId, BehavioralSubmissionRequest request) {
         return submitResponseInternal(sessionId, request.getResponseText());
@@ -173,6 +200,7 @@ public class BehavioralService {
 
     @Transactional(readOnly = true)
     public BehavioralImproveResponse improveResponse(BehavioralImproveRequest request) {
+        aiRateLimitService.checkLimit(getCurrentUser().getId(), AiEndpointCategory.BEHAVIORAL_IMPROVEMENT);
         return aiService.improveBehavioralResponse(request);
     }
 
@@ -185,29 +213,24 @@ public class BehavioralService {
                     "This timed behavioral session has expired. New submissions are no longer allowed.");
         }
 
-        BehavioralQuestion question = getQuestionEntity(session.getQuestionId());
-        BehavioralSubmission previousSubmission = behavioralSubmissionRepository
-                .findBySessionIdOrderBySubmittedAtDesc(session.getId()).stream()
-                .findFirst()
-                .orElse(null);
-        BehavioralFeedbackResponse feedback = aiService.evaluateBehavioralResponse(
-                question,
-                previousSubmission == null ? null : previousSubmission.getResponseText(),
-                responseText);
+        aiRateLimitService.checkLimit(session.getUserId(), AiEndpointCategory.BEHAVIORAL_FEEDBACK);
 
         BehavioralSubmission submission = behavioralSubmissionRepository.save(BehavioralSubmission.builder()
                 .sessionId(session.getId())
                 .userId(session.getUserId())
                 .responseText(responseText)
-                .aiFeedback(writeFeedback(feedback))
+                .aiFeedback(null)
                 .submittedAt(Instant.now())
                 .build());
+        AsyncJob feedbackJob = asyncJobService.enqueueBehavioralFeedbackGeneration(submission.getId());
 
         session.setStatus(BehavioralSessionStatus.COMPLETED);
         behavioralSessionRepository.save(session);
         clearTimerState(session);
+        analyticsCacheService.evict(session.getUserId(), AnalyticsCacheType.BEHAVIORAL_SUMMARY);
+        sessionSummaryService.invalidateBehavioralSummary(session.getId());
 
-        return mapSubmission(submission);
+        return mapSubmission(submission, Optional.of(feedbackJob));
     }
 
     private BehavioralQuestion getQuestionEntity(UUID questionId) {
@@ -251,10 +274,22 @@ public class BehavioralService {
     }
 
     private BehavioralSubmissionResponse mapSubmission(BehavioralSubmission submission) {
+        return mapSubmission(submission, asyncJobService.findLatestBehavioralFeedbackJob(submission.getId()));
+    }
+
+    private BehavioralSubmissionResponse mapSubmission(BehavioralSubmission submission, Optional<AsyncJob> feedbackJob) {
+        BehavioralFeedbackResponse feedback = parseFeedback(submission.getAiFeedback());
+        BehavioralSubmissionFeedbackStatus feedbackStatus = resolveFeedbackStatus(submission, feedbackJob);
+
         return BehavioralSubmissionResponse.builder()
                 .submissionId(submission.getId())
                 .responseText(submission.getResponseText())
-                .feedback(parseFeedback(submission.getAiFeedback()))
+                .feedback(feedback)
+                .feedbackStatus(feedbackStatus)
+                .feedbackJobId(feedbackJob.map(AsyncJob::getId).orElse(null))
+                .feedbackFailureMessage(feedbackStatus == BehavioralSubmissionFeedbackStatus.FAILED
+                        ? feedbackJob.map(AsyncJob::getFailureMessage).orElse(null)
+                        : null)
                 .submittedAt(submission.getSubmittedAt())
                 .build();
     }
@@ -277,6 +312,20 @@ public class BehavioralService {
         } catch (JsonProcessingException exception) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to store behavioral feedback", exception);
         }
+    }
+
+    private BehavioralSubmissionFeedbackStatus resolveFeedbackStatus(
+            BehavioralSubmission submission,
+            Optional<AsyncJob> feedbackJob) {
+        if (submission.getAiFeedback() != null && !submission.getAiFeedback().isBlank()) {
+            return BehavioralSubmissionFeedbackStatus.COMPLETED;
+        }
+
+        if (feedbackJob.isPresent() && feedbackJob.get().getStatus() == AsyncJobStatus.FAILED) {
+            return BehavioralSubmissionFeedbackStatus.FAILED;
+        }
+
+        return BehavioralSubmissionFeedbackStatus.PENDING;
     }
 
     private Integer validateTimeLimitSeconds(boolean isTimed, Integer timeLimitSeconds) {

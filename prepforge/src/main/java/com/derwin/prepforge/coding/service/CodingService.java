@@ -1,6 +1,10 @@
 package com.derwin.prepforge.coding.service;
 
+import com.derwin.prepforge.analytics.cache.AnalyticsCacheService;
+import com.derwin.prepforge.analytics.cache.AnalyticsCacheType;
 import com.derwin.prepforge.auth.entity.User;
+import com.derwin.prepforge.common.ratelimit.AiEndpointCategory;
+import com.derwin.prepforge.common.ratelimit.AiRateLimitService;
 import com.derwin.prepforge.coding.dto.*;
 import com.derwin.prepforge.coding.entity.CodingQuestion;
 import com.derwin.prepforge.coding.entity.CodingSession;
@@ -13,6 +17,8 @@ import com.derwin.prepforge.coding.repository.CodingSubmissionRepository;
 import com.derwin.prepforge.infrastructure.redis.TimedSessionType;
 import com.derwin.prepforge.infrastructure.redis.TimerState;
 import com.derwin.prepforge.infrastructure.redis.TimerStateStore;
+import com.derwin.prepforge.summary.SessionSummaryService;
+import com.derwin.prepforge.summary.dto.SessionSummaryResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -36,10 +42,13 @@ public class CodingService {
     private final CodingQuestionRepository codingQuestionRepository;
     private final CodingSessionRepository codingSessionRepository;
     private final CodingSubmissionRepository codingSubmissionRepository;
+    private final AnalyticsCacheService analyticsCacheService;
     private final AiService aiService;
+    private final AiRateLimitService aiRateLimitService;
     private final CodeExecutionService codeExecutionService;
     private final ObjectMapper objectMapper;
     private final TimerStateStore timerStateStore;
+    private final SessionSummaryService sessionSummaryService;
 
     @Transactional
     public CodingSessionResponse startSession(CodingSessionRequest request) {
@@ -60,6 +69,8 @@ public class CodingService {
                 .build());
 
         cacheTimerState(session);
+        analyticsCacheService.evict(userId, AnalyticsCacheType.CODING_SUMMARY);
+        sessionSummaryService.invalidateCodingSummary(session.getId());
         return mapSession(session);
     }
 
@@ -83,32 +94,11 @@ public class CodingService {
     @Transactional(readOnly = true)
     public CodingAnalyticsResponse getAnalytics() {
         UUID userId = getCurrentUser().getId();
-        List<CodingSubmission> submissions = codingSubmissionRepository.findByUserIdOrderBySubmittedAtDesc(userId);
-        long totalSessionsCount = codingSessionRepository.findByUserIdOrderByStartedAtDesc(userId).size();
-
-        List<Integer> scores = submissions.stream()
-                .map(this::extractScore)
-                .filter(score -> score != null)
-                .toList();
-
-        Double averageScore = scores.isEmpty()
-                ? null
-                : scores.stream()
-                        .mapToInt(Integer::intValue)
-                        .average()
-                        .orElse(0.0);
-
-        Integer latestSubmissionScore = submissions.stream()
-                .map(this::extractScore)
-                .filter(score -> score != null)
-                .findFirst()
-                .orElse(null);
-
-        return CodingAnalyticsResponse.builder()
-                .averageScore(averageScore)
-                .totalSessionsCount(totalSessionsCount)
-                .latestSubmissionScore(latestSubmissionScore)
-                .build();
+        return analyticsCacheService.getOrLoad(
+                userId,
+                AnalyticsCacheType.CODING_SUMMARY,
+                CodingAnalyticsResponse.class,
+                () -> computeAnalytics(userId));
     }
 
     @Transactional(readOnly = true)
@@ -129,6 +119,11 @@ public class CodingService {
                 .build();
     }
 
+    @Transactional(readOnly = true)
+    public SessionSummaryResponse getSessionSummary(UUID sessionId) {
+        return sessionSummaryService.getCodingSummary(sessionId);
+    }
+
     @Transactional
     public CodingStrategyResponse saveStrategy(UUID sessionId, CodingStrategyRequest request) {
         CodingSession session = getOwnedSession(sessionId);
@@ -139,6 +134,7 @@ public class CodingService {
         session.setExpectedSpaceComplexity(request.getExpectedSpaceComplexity());
 
         CodingSession savedSession = codingSessionRepository.save(session);
+        sessionSummaryService.invalidateCodingSummary(savedSession.getId());
         return mapStrategy(savedSession);
     }
 
@@ -146,6 +142,7 @@ public class CodingService {
     public StrategyEvaluationResponse evaluateStrategy(UUID sessionId, CodingStrategyRequest request) {
         CodingSession session = getOwnedSession(sessionId);
         CodingQuestion question = getQuestionEntity(session.getQuestionId());
+        aiRateLimitService.checkLimit(session.getUserId(), AiEndpointCategory.STRATEGY_EVALUATION);
 
         return aiService.evaluateStrategy(question, request);
     }
@@ -154,6 +151,7 @@ public class CodingService {
     public ApproachImplementationComparisonResponse compareApproachAndImplementation(UUID sessionId) {
         CodingSession session = getOwnedSession(sessionId);
         CodingQuestion question = getQuestionEntity(session.getQuestionId());
+        aiRateLimitService.checkLimit(session.getUserId(), AiEndpointCategory.APPROACH_COMPARISON);
 
         if (isBlank(session.getPlannedApproach())) {
             throw new ResponseStatusException(
@@ -194,6 +192,7 @@ public class CodingService {
         }
 
         CodingQuestion question = getQuestionEntity(session.getQuestionId());
+        aiRateLimitService.checkLimit(session.getUserId(), AiEndpointCategory.CODING_FEEDBACK);
 
         CodingSubmission submission = CodingSubmission.builder()
                 .sessionId(session.getId())
@@ -213,6 +212,8 @@ public class CodingService {
         session.setStatus(CodingSessionStatus.COMPLETED);
         codingSessionRepository.save(session);
         clearTimerState(session);
+        analyticsCacheService.evict(session.getUserId(), AnalyticsCacheType.CODING_SUMMARY);
+        sessionSummaryService.invalidateCodingSummary(session.getId());
 
         return mapSubmission(savedSubmission);
     }
@@ -229,6 +230,7 @@ public class CodingService {
     @Transactional(readOnly = true)
     public CodingImprovementResponse improveSubmission(UUID submissionId) {
         UUID userId = getCurrentUser().getId();
+        aiRateLimitService.checkLimit(userId, AiEndpointCategory.CODING_IMPROVEMENT);
 
         CodingSubmission submission = codingSubmissionRepository.findByIdAndUserId(submissionId, userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Coding submission not found"));
@@ -459,6 +461,35 @@ public class CodingService {
         } catch (Exception exception) {
             return null;
         }
+    }
+
+    private CodingAnalyticsResponse computeAnalytics(UUID userId) {
+        List<CodingSubmission> submissions = codingSubmissionRepository.findByUserIdOrderBySubmittedAtDesc(userId);
+        long totalSessionsCount = codingSessionRepository.findByUserIdOrderByStartedAtDesc(userId).size();
+
+        List<Integer> scores = submissions.stream()
+                .map(this::extractScore)
+                .filter(score -> score != null)
+                .toList();
+
+        Double averageScore = scores.isEmpty()
+                ? null
+                : scores.stream()
+                        .mapToInt(Integer::intValue)
+                        .average()
+                        .orElse(0.0);
+
+        Integer latestSubmissionScore = submissions.stream()
+                .map(this::extractScore)
+                .filter(score -> score != null)
+                .findFirst()
+                .orElse(null);
+
+        return CodingAnalyticsResponse.builder()
+                .averageScore(averageScore)
+                .totalSessionsCount(totalSessionsCount)
+                .latestSubmissionScore(latestSubmissionScore)
+                .build();
     }
 
     private boolean isBlank(String value) {

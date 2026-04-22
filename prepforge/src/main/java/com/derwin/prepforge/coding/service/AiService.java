@@ -1,6 +1,7 @@
 package com.derwin.prepforge.coding.service;
 
 import com.derwin.prepforge.behavioral.dto.BehavioralFeedbackResponse;
+import com.derwin.prepforge.behavioral.dto.BehavioralComparisonAnalysisResponse;
 import com.derwin.prepforge.behavioral.dto.BehavioralImproveRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralImproveResponse;
 import com.derwin.prepforge.behavioral.entity.BehavioralQuestion;
@@ -118,24 +119,33 @@ public class AiService {
             - impact
             - communication readiness
 
-            If a previous attempt is provided, compare the current answer against it and identify concrete improvements and regressions.
-
             Return JSON only with:
             - score
             - summary
-            - improvements
-            - regressions
             - strengths
             - weaknesses
             - recommendations
 
             Keep the feedback honest, practical, and concise.
             score must be an integer from 0 to 10.
-            improvements, regressions, strengths, weaknesses, and recommendations must each be arrays of short strings.
+            strengths, weaknesses, and recommendations must each be arrays of short strings.
             recommendations must include:
             - one measurable metric suggestion
             - one stronger action detail suggestion
             - one improvement for the Result section
+            """;
+    private static final String BEHAVIORAL_COMPARISON_SYSTEM_PROMPT = """
+            You are a senior behavioral interview coach comparing two interview answers from the same candidate.
+
+            Compare the latest answer against the previous attempt.
+
+            Return JSON only with:
+            - improvements
+            - regressions
+
+            improvements should capture concrete ways the newest answer became stronger.
+            regressions should capture concrete ways the newest answer became weaker or less clear.
+            Keep both lists concise, practical, and honest.
             """;
     private static final String BEHAVIORAL_IMPROVEMENT_SYSTEM_PROMPT = """
             You are a senior behavioral interview coach rewriting a candidate's answer.
@@ -253,6 +263,32 @@ public class AiService {
                     buildBehavioralFeedbackSchema());
 
             return objectMapper.readValue(rawJson, BehavioralFeedbackResponse.class);
+        } catch (RestClientException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
+        } catch (JsonProcessingException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
+        }
+    }
+
+    public BehavioralComparisonAnalysisResponse analyzeBehavioralImprovement(
+            BehavioralQuestion question,
+            String previousResponseText,
+            String currentResponseText,
+            String previousFeedbackSummary,
+            String currentFeedbackSummary) {
+        try {
+            String rawJson = executeStructuredResponse(
+                    "behavioral_comparison",
+                    BEHAVIORAL_COMPARISON_SYSTEM_PROMPT,
+                    buildBehavioralComparisonPrompt(
+                            question,
+                            previousResponseText,
+                            currentResponseText,
+                            previousFeedbackSummary,
+                            currentFeedbackSummary),
+                    buildBehavioralComparisonSchema());
+
+            return objectMapper.readValue(rawJson, BehavioralComparisonAnalysisResponse.class);
         } catch (RestClientException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
         } catch (JsonProcessingException exception) {
@@ -425,17 +461,52 @@ public class AiService {
                 Difficulty:
                 %s
 
-                Previous Attempt:
-                %s
-
                 Candidate Response:
                 %s
                 """.formatted(
                 question.getQuestionText(),
                 question.getCategory(),
                 question.getDifficulty(),
-                defaultIfBlank(previousResponseText, "No previous attempt available."),
                 defaultIfBlank(responseText, "No response provided."));
+    }
+
+    private String buildBehavioralComparisonPrompt(
+            BehavioralQuestion question,
+            String previousResponseText,
+            String currentResponseText,
+            String previousFeedbackSummary,
+            String currentFeedbackSummary) {
+        return """
+                Compare these two behavioral interview answers from the same candidate.
+
+                Question:
+                %s
+
+                Category:
+                %s
+
+                Difficulty:
+                %s
+
+                Previous Answer:
+                %s
+
+                Latest Answer:
+                %s
+
+                Previous Feedback Summary:
+                %s
+
+                Latest Feedback Summary:
+                %s
+                """.formatted(
+                question.getQuestionText(),
+                question.getCategory(),
+                question.getDifficulty(),
+                defaultIfBlank(previousResponseText, "No previous response provided."),
+                defaultIfBlank(currentResponseText, "No current response provided."),
+                defaultIfBlank(previousFeedbackSummary, "No previous feedback summary available."),
+                defaultIfBlank(currentFeedbackSummary, "No current feedback summary available."));
     }
 
     private String buildBehavioralImprovementPrompt(BehavioralImproveRequest request) {
@@ -554,12 +625,6 @@ public class AiService {
                                 "minimum", 0,
                                 "maximum", 10),
                         "summary", Map.of("type", "string"),
-                        "improvements", Map.of(
-                                "type", "array",
-                                "items", Map.of("type", "string")),
-                        "regressions", Map.of(
-                                "type", "array",
-                                "items", Map.of("type", "string")),
                         "strengths", Map.of(
                                 "type", "array",
                                 "items", Map.of("type", "string")),
@@ -572,11 +637,23 @@ public class AiService {
                 "required", List.of(
                         "score",
                         "summary",
-                        "improvements",
-                        "regressions",
                         "strengths",
                         "weaknesses",
                         "recommendations"));
+    }
+
+    private Map<String, Object> buildBehavioralComparisonSchema() {
+        return Map.of(
+                "type", "object",
+                "additionalProperties", false,
+                "properties", Map.of(
+                        "improvements", Map.of(
+                                "type", "array",
+                                "items", Map.of("type", "string")),
+                        "regressions", Map.of(
+                                "type", "array",
+                                "items", Map.of("type", "string"))),
+                "required", List.of("improvements", "regressions"));
     }
 
     private Map<String, Object> buildBehavioralImprovementSchema() {

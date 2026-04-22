@@ -21,6 +21,11 @@ export const behavioralService = {
     return data;
   },
 
+  async getSessionSummary(sessionId) {
+    const { data } = await apiClient.get(`/api/v1/behavioral/sessions/${sessionId}/summary`);
+    return data;
+  },
+
   async submitResponse(sessionId, payload) {
     const { data } = await apiClient.post("/api/v1/behavioral/submissions", {
       sessionId,
