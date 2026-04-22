@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import Button from "../ui/Button";
 
 function Navbar({ user, onLogout }) {
@@ -15,6 +15,11 @@ function Navbar({ user, onLogout }) {
           </div>
         </Link>
 
+        <nav className="hidden items-center gap-2 md:flex">
+          <NavItem to="/dashboard">Coding</NavItem>
+          <NavItem to="/behavioral">Behavioral</NavItem>
+        </nav>
+
         <div className="flex items-center gap-3">
           <div className="hidden rounded-2xl border border-white/10 bg-white/5 px-4 py-2 sm:block">
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Signed In</p>
@@ -26,6 +31,23 @@ function Navbar({ user, onLogout }) {
         </div>
       </div>
     </header>
+  );
+}
+
+function NavItem({ children, to }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        `rounded-2xl px-4 py-2 text-sm font-medium transition ${
+          isActive
+            ? "bg-ember-500/15 text-ember-300"
+            : "text-slate-300 hover:bg-white/5 hover:text-white"
+        }`
+      }
+    >
+      {children}
+    </NavLink>
   );
 }
 

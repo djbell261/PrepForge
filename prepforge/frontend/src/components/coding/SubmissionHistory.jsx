@@ -1,4 +1,5 @@
-import Editor from "@monaco-editor/react";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import StatusBadge from "../ui/StatusBadge";
 import EmptyState from "../ui/EmptyState";
 import { formatDateTime } from "../../utils/formatters";
@@ -18,6 +19,8 @@ function SubmissionHistory({ submissions }) {
     <div className="space-y-4">
       {submissions.map((submission) => {
         const feedback = parseAiFeedback(submission.aiFeedback);
+        const hasCode = Boolean(submission.code);
+        const language = getCodeLanguage(submission.language);
 
         return (
           <div key={submission.submissionId} className="panel p-5">
@@ -34,22 +37,36 @@ function SubmissionHistory({ submissions }) {
             </div>
 
             <div className="mt-5 grid gap-5 xl:grid-cols-[1.15fr,0.85fr]">
-              <div className="overflow-hidden rounded-2xl border border-white/10">
-                <Editor
-                  height="320px"
-                  defaultLanguage={submission.language || "javascript"}
-                  value={submission.solutionCode || "// Submission source will appear here later."}
-                  options={{
-                    readOnly: true,
-                    minimap: { enabled: false },
-                    lineNumbers: "on",
-                    fontSize: 14,
-                    scrollBeyondLastLine: false,
-                    wordWrap: "on",
-                  }}
-                  theme="vs-dark"
-                />
-              </div>
+              {hasCode ? (
+                <div className="overflow-hidden rounded-2xl border border-white/10 bg-forge-950">
+                  <div className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.3em] text-slate-500">
+                    Submitted Code
+                  </div>
+                  <SyntaxHighlighter
+                    customStyle={{
+                      margin: 0,
+                      padding: "1rem",
+                      background: "transparent",
+                      minHeight: "320px",
+                    }}
+                    language={language}
+                    showLineNumbers
+                    style={vscDarkPlus}
+                    wrapLongLines
+                  >
+                    {submission.code}
+                  </SyntaxHighlighter>
+                </div>
+              ) : (
+                <div className="panel-soft flex min-h-[320px] items-center justify-center p-6 text-center">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Source code unavailable</p>
+                    <p className="mt-2 max-w-sm text-sm text-slate-400">
+                      This submission does not include stored source code yet.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="panel-soft p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-ember-300">AI Feedback</p>
@@ -99,6 +116,17 @@ function FeedbackList({ title, items = [] }) {
       )}
     </div>
   );
+}
+
+function getCodeLanguage(language) {
+  const normalized = language?.toLowerCase();
+
+  if (normalized === "java") return "java";
+  if (normalized === "javascript") return "javascript";
+  if (normalized === "python") return "python";
+  if (normalized === "cpp" || normalized === "c++") return "cpp";
+
+  return "java";
 }
 
 export default SubmissionHistory;

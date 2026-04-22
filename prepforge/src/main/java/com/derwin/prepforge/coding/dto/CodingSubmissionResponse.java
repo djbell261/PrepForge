@@ -20,5 +20,6 @@ public class CodingSubmissionResponse {
     private String language;
     private SubmissionStatus status;
     private Instant submittedAt;
+    private String code;
     private String aiFeedback;
 }

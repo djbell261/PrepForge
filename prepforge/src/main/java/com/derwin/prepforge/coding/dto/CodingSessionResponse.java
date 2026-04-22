@@ -18,5 +18,9 @@ public class CodingSessionResponse {
     private UUID sessionId;
     private UUID questionId;
     private CodingSessionStatus status;
+    private boolean timedMode;
+    private Integer durationMinutes;
+    private Instant expiresAt;
+    private boolean expired;
     private Instant startedAt;
 }

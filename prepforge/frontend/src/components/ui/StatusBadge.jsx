@@ -3,6 +3,8 @@ function StatusBadge({ value }) {
   const styles =
     normalized === "COMPLETED"
       ? "bg-emerald-500/15 text-emerald-300"
+      : normalized === "EXPIRED"
+        ? "bg-red-500/15 text-red-300"
       : normalized === "REVIEWED"
         ? "bg-amber-500/15 text-amber-300"
         : "bg-white/10 text-slate-300";

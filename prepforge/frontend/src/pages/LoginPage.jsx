@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { extractApiErrorMessage } from "../services/api";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
 
@@ -27,7 +28,7 @@ function LoginPage() {
       await login(form);
       navigate("/dashboard");
     } catch (requestError) {
-      setError(requestError.response?.data?.message || "Login failed. Check your credentials and try again.");
+      setError(extractApiErrorMessage(requestError, "Login failed. Check your credentials and try again."));
     } finally {
       setIsSubmitting(false);
     }

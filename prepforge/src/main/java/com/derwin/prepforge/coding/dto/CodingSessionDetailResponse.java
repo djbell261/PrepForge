@@ -14,6 +14,7 @@ import lombok.Setter;
 @AllArgsConstructor
 public class CodingSessionDetailResponse {
     private CodingSessionResponse session;
+    private CodingStrategyResponse strategy;
     private CodingQuestionResponse question;
     private List<CodingSubmissionResponse> submissions;
 }

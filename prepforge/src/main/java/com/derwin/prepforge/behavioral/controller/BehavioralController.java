@@ -1,12 +1,21 @@
 package com.derwin.prepforge.behavioral.controller;
 
 import com.derwin.prepforge.behavioral.dto.BehavioralQuestionResponse;
+import com.derwin.prepforge.behavioral.dto.BehavioralSessionDetailResponse;
+import com.derwin.prepforge.behavioral.dto.BehavioralSessionRequest;
+import com.derwin.prepforge.behavioral.dto.BehavioralSessionResponse;
+import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionRequest;
+import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionResponse;
 import com.derwin.prepforge.behavioral.service.BehavioralService;
+import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -17,8 +26,26 @@ public class BehavioralController {
 
     private final BehavioralService behavioralService;
 
-    @GetMapping("/questions/{questionId}")
-    public ResponseEntity<BehavioralQuestionResponse> getQuestion(@PathVariable UUID questionId) {
-        return ResponseEntity.ok(behavioralService.getQuestion(questionId));
+    @GetMapping("/questions")
+    public ResponseEntity<List<BehavioralQuestionResponse>> getQuestions() {
+        return ResponseEntity.ok(behavioralService.getQuestions());
+    }
+
+    @PostMapping("/sessions")
+    public ResponseEntity<BehavioralSessionResponse> startSession(
+            @Valid @RequestBody BehavioralSessionRequest request) {
+        return ResponseEntity.ok(behavioralService.startSession(request));
+    }
+
+    @GetMapping("/sessions/{sessionId}")
+    public ResponseEntity<BehavioralSessionDetailResponse> getSessionDetail(@PathVariable UUID sessionId) {
+        return ResponseEntity.ok(behavioralService.getSessionDetail(sessionId));
+    }
+
+    @PostMapping("/sessions/{sessionId}/submissions")
+    public ResponseEntity<BehavioralSubmissionResponse> submitResponse(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody BehavioralSubmissionRequest request) {
+        return ResponseEntity.ok(behavioralService.submitResponse(sessionId, request));
     }
 }

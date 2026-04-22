@@ -20,10 +20,14 @@ function StatsCard({ label, value, detail }) {
 }
 
 function StatsOverview({ analytics }) {
+  const averageScore = analytics?.averageScore ?? 0;
+  const latestScore = analytics?.latestSubmissionScore ?? 0;
+  const totalSessions = analytics?.totalSessionsCount ?? 0;
+
   const chartData = [
-    { name: "Average", value: analytics?.averageScore ?? 0 },
-    { name: "Latest", value: analytics?.latestSubmissionScore ?? 0 },
-    { name: "Sessions", value: analytics?.totalSessionsCount ?? 0 },
+    { name: "Average", value: averageScore },
+    { name: "Latest", value: latestScore },
+    { name: "Sessions", value: totalSessions },
   ];
 
   return (
@@ -41,7 +45,7 @@ function StatsOverview({ analytics }) {
         />
         <StatsCard
           label="Sessions"
-          value={analytics?.totalSessionsCount ?? 0}
+          value={totalSessions}
           detail="Total coding sessions started so far."
         />
       </div>

@@ -1,6 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { authService } from "../services/authService";
-import { clearStoredToken, getStoredToken, setStoredToken } from "../services/api";
+import {
+  clearStoredToken,
+  getStoredToken,
+  onUnauthorized,
+  setStoredToken,
+} from "../services/api";
 
 const AuthContext = createContext(null);
 
@@ -8,6 +13,12 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(getStoredToken());
   const [user, setUser] = useState(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+
+  useEffect(() => onUnauthorized(() => {
+    setToken(null);
+    setUser(null);
+    setIsBootstrapping(false);
+  }), []);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -59,7 +70,7 @@ export function AuthProvider({ children }) {
     () => ({
       token,
       user,
-      isAuthenticated: Boolean(token),
+      isAuthenticated: Boolean(token && user),
       isBootstrapping,
       login,
       register,

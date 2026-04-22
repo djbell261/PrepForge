@@ -1,6 +1,7 @@
 package com.derwin.prepforge.coding.dto;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -16,4 +17,9 @@ import lombok.Setter;
 public class CodingSessionRequest {
     @NotNull
     private UUID questionId;
+
+    private Boolean timedMode;
+
+    @Positive
+    private Integer durationMinutes;
 }

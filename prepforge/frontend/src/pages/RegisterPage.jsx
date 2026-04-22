@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AuthShell } from "./LoginPage";
 import { useAuth } from "../hooks/useAuth";
+import { extractApiErrorMessage } from "../services/api";
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
 
@@ -28,7 +29,7 @@ function RegisterPage() {
       await register(form);
       navigate("/dashboard");
     } catch (requestError) {
-      setError(requestError.response?.data?.message || "Registration failed. Please try again.");
+      setError(extractApiErrorMessage(requestError, "Registration failed. Please try again."));
     } finally {
       setIsSubmitting(false);
     }

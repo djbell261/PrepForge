@@ -39,6 +39,25 @@ public class CodingSession {
     @Column(nullable = false)
     private CodingSessionStatus status;
 
+    @Column(nullable = false)
+    private boolean timedMode;
+
+    private Integer durationMinutes;
+
+    private Instant expiresAt;
+
+    @Column(length = 4_000)
+    private String clarificationQuestions;
+
+    @Column(length = 4_000)
+    private String plannedApproach;
+
+    @Column(length = 255)
+    private String expectedTimeComplexity;
+
+    @Column(length = 255)
+    private String expectedSpaceComplexity;
+
     @Column(nullable = false, updatable = false)
     private Instant startedAt;
 }
