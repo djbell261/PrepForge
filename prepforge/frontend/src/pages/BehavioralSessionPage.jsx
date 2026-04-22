@@ -18,6 +18,9 @@ function BehavioralSessionPage() {
   const [error, setError] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isImproving, setIsImproving] = useState(false);
+  const [improveError, setImproveError] = useState("");
+  const [now, setNow] = useState(Date.now());
 
   const loadDetail = async () => {
     setIsLoading(true);
@@ -48,7 +51,34 @@ function BehavioralSessionPage() {
     loadDetail();
   }, [sessionId, token, isAuthenticated]);
 
+  useEffect(() => {
+    if (!detail?.session?.isTimed || detail?.session?.expired) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [detail?.session?.isTimed, detail?.session?.expired]);
+
   const latestFeedback = detail?.submissions?.[0]?.feedback ?? null;
+  const previousFeedback = detail?.submissions?.[1]?.feedback ?? null;
+  const latestScore = latestFeedback?.score ?? null;
+  const previousScore = previousFeedback?.score ?? null;
+  const isImprovingTrend =
+    latestScore !== null && latestScore !== undefined && previousScore !== null && previousScore !== undefined
+      ? latestScore > previousScore
+      : false;
+
+  const expiresAtMs =
+    detail?.session?.isTimed && detail?.session?.timeLimitSeconds
+      ? new Date(detail.session.startedAt).getTime() + detail.session.timeLimitSeconds * 1000
+      : null;
+  const timeRemainingMs = expiresAtMs ? Math.max(expiresAtMs - now, 0) : null;
+  const sessionExpired =
+    Boolean(detail?.session?.expired) || (expiresAtMs !== null ? timeRemainingMs === 0 : false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -67,6 +97,32 @@ function BehavioralSessionPage() {
       );
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleImproveAnswer = async () => {
+    setImproveError("");
+    setIsImproving(true);
+
+    try {
+      const response = await behavioralService.improveResponse({
+        responseText,
+        feedback: {
+          strengths: latestFeedback?.strengths || [],
+          weaknesses: latestFeedback?.weaknesses || [],
+        },
+      });
+
+      setResponseText(response.improvedResponse || responseText);
+    } catch (requestError) {
+      setImproveError(
+        extractApiErrorMessage(
+          requestError,
+          "We couldn't improve this answer right now. Please try again.",
+        ),
+      );
+    } finally {
+      setIsImproving(false);
     }
   };
 
@@ -153,6 +209,31 @@ function BehavioralSessionPage() {
         </div>
 
         <div className="panel p-6">
+          {detail?.session?.isTimed ? (
+            <div className={`mb-5 rounded-3xl border px-5 py-4 ${
+              sessionExpired
+                ? "border-red-500/20 bg-red-500/10"
+                : timeRemainingMs !== null && timeRemainingMs <= 2 * 60 * 1000
+                  ? "border-red-500/20 bg-red-500/10"
+                  : "border-amber-500/20 bg-amber-500/10"
+            }`}>
+              <p className="text-xs uppercase tracking-[0.3em] text-ember-300">Pressure Mode</p>
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm leading-7 text-slate-300">
+                  {sessionExpired
+                    ? "Time is up. You can keep revising, but submitting a new attempt is locked."
+                    : "Answer as if you are live with an interviewer and a clock is running."}
+                </p>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-center">
+                  <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Time Remaining</p>
+                  <p className={`mt-2 text-2xl font-semibold ${sessionExpired ? "text-red-300" : "text-white"}`}>
+                    {formatCountdown(timeRemainingMs)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <p className="text-xs uppercase tracking-[0.3em] text-ember-300">Your Response</p>
           <h2 className="mt-3 text-2xl font-semibold text-white">Write your interview answer</h2>
           <p className="mt-3 text-sm leading-7 text-slate-400">
@@ -160,20 +241,47 @@ function BehavioralSessionPage() {
           </p>
 
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-            <textarea
-              className="min-h-[320px] w-full rounded-3xl border border-white/10 bg-forge-800 px-4 py-4 text-slate-100 placeholder:text-slate-500 ember-ring"
-              placeholder="Describe the situation, your responsibility, the actions you took, and the measurable result."
-              value={responseText}
-              onChange={(event) => setResponseText(event.target.value)}
-            />
+            <div className="grid gap-4 xl:grid-cols-[1fr,0.42fr]">
+              <textarea
+                className="min-h-[320px] w-full rounded-3xl border border-white/10 bg-forge-800 px-4 py-4 text-slate-100 placeholder:text-slate-500 ember-ring"
+                placeholder="Describe the situation, your responsibility, the actions you took, and the measurable result."
+                value={responseText}
+                onChange={(event) => setResponseText(event.target.value)}
+              />
+
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
+                <p className="text-xs uppercase tracking-[0.3em] text-ember-300">STAR Sidecar</p>
+                <div className="mt-4 space-y-3">
+                  {guidanceSteps.map((step) => (
+                    <div key={step.label} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-sm font-semibold text-white">{step.label}</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-400">{step.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
 
             {submitError ? (
               <p className="rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-300">{submitError}</p>
             ) : null}
 
+            {improveError ? (
+              <p className="rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-300">{improveError}</p>
+            ) : null}
+
+            {sessionExpired ? (
+              <p className="rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                This timed behavioral session has expired. You can keep editing your answer, but new submissions are locked.
+              </p>
+            ) : null}
+
             <div className="flex flex-wrap gap-3">
-              <Button disabled={isSubmitting || !responseText.trim()} type="submit">
-                {isSubmitting ? "Evaluating response..." : "Submit for AI Feedback"}
+              <Button disabled={isSubmitting || sessionExpired || !responseText.trim()} type="submit">
+                {isSubmitting ? "Evaluating answer..." : "Submit Answer"}
+              </Button>
+              <Button disabled={isImproving || !responseText.trim()} onClick={handleImproveAnswer} type="button" variant="ghost">
+                {isImproving ? "Improving answer..." : "Improve My Answer"}
               </Button>
               <Button onClick={loadDetail} type="button" variant="ghost">
                 Refresh Session
@@ -190,15 +298,24 @@ function BehavioralSessionPage() {
 
           {latestFeedback ? (
             <div className="mt-6 space-y-5">
-              <div className="rounded-2xl border border-ember-500/20 bg-ember-500/10 p-4">
+              <div className={`rounded-2xl border p-4 ${getScoreTone(latestScore)}`}>
                 <p className="text-xs uppercase tracking-[0.3em] text-ember-300">Score</p>
-                <p className="mt-2 text-4xl font-bold text-white">
+                <p className={`mt-2 text-4xl font-bold ${getScoreTextTone(latestScore)}`}>
                   {latestFeedback.score ?? "N/A"}
                   <span className="ml-2 text-base font-medium text-slate-400">/ 10</span>
                 </p>
+                {isImprovingTrend ? (
+                  <p className="mt-3 text-sm font-medium text-emerald-300">You&apos;re improving.</p>
+                ) : null}
               </div>
 
               <FeedbackBlock title="Summary" text={latestFeedback.summary} />
+              {Array.isArray(latestFeedback.improvements) && latestFeedback.improvements.length ? (
+                <FeedbackList title="What Improved?" items={latestFeedback.improvements} />
+              ) : null}
+              {Array.isArray(latestFeedback.regressions) && latestFeedback.regressions.length ? (
+                <FeedbackList title="Regressions" items={latestFeedback.regressions} />
+              ) : null}
               <FeedbackList title="Strengths" items={latestFeedback.strengths} />
               <FeedbackList title="Weaknesses" items={latestFeedback.weaknesses} />
               <FeedbackList title="Recommendations" items={latestFeedback.recommendations} />
@@ -288,7 +405,7 @@ function FeedbackBlock({ title, text }) {
   );
 }
 
-function FeedbackList({ title, items }) {
+function FeedbackList({ title, items, emptyLabel }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
       <p className="font-semibold text-white">{title}</p>
@@ -301,10 +418,54 @@ function FeedbackList({ title, items }) {
           ))}
         </ul>
       ) : (
-        <p className="mt-3 text-sm text-slate-500">No {title.toLowerCase()} available.</p>
+        <p className="mt-3 text-sm text-slate-500">{emptyLabel || `No ${title.toLowerCase()} available.`}</p>
       )}
     </div>
   );
 }
 
 export default BehavioralSessionPage;
+
+function getScoreTone(score) {
+  if (score === null || score === undefined) {
+    return "border-white/10 bg-white/5";
+  }
+
+  if (score <= 5) {
+    return "border-red-500/20 bg-red-500/10";
+  }
+
+  if (score <= 7) {
+    return "border-amber-500/20 bg-amber-500/10";
+  }
+
+  return "border-emerald-500/20 bg-emerald-500/10";
+}
+
+function getScoreTextTone(score) {
+  if (score === null || score === undefined) {
+    return "text-white";
+  }
+
+  if (score <= 5) {
+    return "text-red-300";
+  }
+
+  if (score <= 7) {
+    return "text-amber-300";
+  }
+
+  return "text-emerald-300";
+}
+
+function formatCountdown(timeRemainingMs) {
+  if (timeRemainingMs === null || timeRemainingMs === undefined) {
+    return "--:--";
+  }
+
+  const totalSeconds = Math.floor(timeRemainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}

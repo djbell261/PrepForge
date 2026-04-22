@@ -15,6 +15,8 @@ import lombok.Setter;
 public class BehavioralFeedbackResponse {
     private Integer score;
     private String summary;
+    private List<String> improvements;
+    private List<String> regressions;
     private List<String> strengths;
     private List<String> weaknesses;
     private List<String> recommendations;

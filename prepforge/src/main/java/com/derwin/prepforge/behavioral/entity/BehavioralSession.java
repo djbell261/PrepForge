@@ -39,6 +39,11 @@ public class BehavioralSession {
     @Column(nullable = false)
     private BehavioralSessionStatus status;
 
+    @Column(nullable = false)
+    private boolean isTimed;
+
+    private Integer timeLimitSeconds;
+
     @Column(nullable = false, updatable = false)
     private Instant startedAt;
 }

@@ -1,6 +1,11 @@
 import { apiClient } from "./api";
 
 export const behavioralService = {
+  async getAnalytics() {
+    const { data } = await apiClient.get("/api/v1/behavioral/analytics/me");
+    return data;
+  },
+
   async getQuestions() {
     const { data } = await apiClient.get("/api/v1/behavioral/questions");
     return data;
@@ -17,7 +22,15 @@ export const behavioralService = {
   },
 
   async submitResponse(sessionId, payload) {
-    const { data } = await apiClient.post(`/api/v1/behavioral/sessions/${sessionId}/submissions`, payload);
+    const { data } = await apiClient.post("/api/v1/behavioral/submissions", {
+      sessionId,
+      responseText: payload.responseText,
+    });
+    return data;
+  },
+
+  async improveResponse(payload) {
+    const { data } = await apiClient.post("/api/v1/behavioral/improve", payload);
     return data;
   },
 };

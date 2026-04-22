@@ -1,0 +1,3 @@
+ALTER TABLE behavioral_sessions
+    ADD COLUMN IF NOT EXISTS is_timed BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS time_limit_seconds INTEGER;

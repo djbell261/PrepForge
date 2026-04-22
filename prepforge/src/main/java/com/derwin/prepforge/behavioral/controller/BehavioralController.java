@@ -1,6 +1,10 @@
 package com.derwin.prepforge.behavioral.controller;
 
+import com.derwin.prepforge.behavioral.dto.BehavioralImproveRequest;
+import com.derwin.prepforge.behavioral.dto.BehavioralImproveResponse;
 import com.derwin.prepforge.behavioral.dto.BehavioralQuestionResponse;
+import com.derwin.prepforge.behavioral.dto.BehavioralAnalyticsResponse;
+import com.derwin.prepforge.behavioral.dto.BehavioralSubmissionCreateRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralSessionDetailResponse;
 import com.derwin.prepforge.behavioral.dto.BehavioralSessionRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralSessionResponse;
@@ -31,6 +35,11 @@ public class BehavioralController {
         return ResponseEntity.ok(behavioralService.getQuestions());
     }
 
+    @GetMapping("/analytics/me")
+    public ResponseEntity<BehavioralAnalyticsResponse> getAnalytics() {
+        return ResponseEntity.ok(behavioralService.getAnalytics());
+    }
+
     @PostMapping("/sessions")
     public ResponseEntity<BehavioralSessionResponse> startSession(
             @Valid @RequestBody BehavioralSessionRequest request) {
@@ -47,5 +56,17 @@ public class BehavioralController {
             @PathVariable UUID sessionId,
             @Valid @RequestBody BehavioralSubmissionRequest request) {
         return ResponseEntity.ok(behavioralService.submitResponse(sessionId, request));
+    }
+
+    @PostMapping("/submissions")
+    public ResponseEntity<BehavioralSubmissionResponse> submitResponse(
+            @Valid @RequestBody BehavioralSubmissionCreateRequest request) {
+        return ResponseEntity.ok(behavioralService.submitResponse(request.getSessionId(), request));
+    }
+
+    @PostMapping("/improve")
+    public ResponseEntity<BehavioralImproveResponse> improveResponse(
+            @Valid @RequestBody BehavioralImproveRequest request) {
+        return ResponseEntity.ok(behavioralService.improveResponse(request));
     }
 }

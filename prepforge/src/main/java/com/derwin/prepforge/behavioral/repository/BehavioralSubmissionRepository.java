@@ -7,4 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface BehavioralSubmissionRepository extends JpaRepository<BehavioralSubmission, UUID> {
     List<BehavioralSubmission> findBySessionIdOrderBySubmittedAtDesc(UUID sessionId);
+
+    List<BehavioralSubmission> findByUserIdOrderBySubmittedAtDesc(UUID userId);
 }

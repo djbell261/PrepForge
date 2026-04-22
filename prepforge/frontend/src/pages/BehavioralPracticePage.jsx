@@ -16,6 +16,10 @@ function BehavioralPracticePage() {
   const [error, setError] = useState("");
   const [startError, setStartError] = useState("");
   const [startingQuestionId, setStartingQuestionId] = useState(null);
+  const [startMode, setStartMode] = useState({
+    isTimed: false,
+    timeLimitSeconds: 600,
+  });
 
   const loadQuestions = async () => {
     setIsLoading(true);
@@ -59,7 +63,11 @@ function BehavioralPracticePage() {
     setStartingQuestionId(questionId);
 
     try {
-      const session = await behavioralService.startSession({ questionId });
+      const session = await behavioralService.startSession({
+        questionId,
+        isTimed: startMode.isTimed,
+        timeLimitSeconds: startMode.isTimed ? Number(startMode.timeLimitSeconds) : null,
+      });
       navigate(`/behavioral/sessions/${session.sessionId}`);
     } catch (requestError) {
       setStartError(
@@ -133,6 +141,43 @@ function BehavioralPracticePage() {
           </label>
         </div>
 
+        <div className="mt-6 grid gap-4 lg:grid-cols-[1fr,0.4fr]">
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-slate-200">Interview Pressure Mode</span>
+            <div className="grid gap-3 md:grid-cols-2">
+              <ModeCard
+                active={!startMode.isTimed}
+                description="Answer with full breathing room and iterate without a countdown."
+                onClick={() => setStartMode((current) => ({ ...current, isTimed: false }))}
+                title="Practice Mode"
+              />
+              <ModeCard
+                active={startMode.isTimed}
+                description="Simulate a live interview with a countdown and submission lock when time runs out."
+                onClick={() => setStartMode((current) => ({ ...current, isTimed: true }))}
+                title="Pressure Mode"
+              />
+            </div>
+          </div>
+
+          {startMode.isTimed ? (
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-slate-200">Time Limit</span>
+              <select
+                className="w-full rounded-2xl border border-white/10 bg-forge-800 px-4 py-3 text-slate-100 ember-ring"
+                value={startMode.timeLimitSeconds}
+                onChange={(event) =>
+                  setStartMode((current) => ({ ...current, timeLimitSeconds: Number(event.target.value) }))
+                }
+              >
+                <option value={300}>5 minutes</option>
+                <option value={600}>10 minutes</option>
+                <option value={900}>15 minutes</option>
+              </select>
+            </label>
+          ) : null}
+        </div>
+
         {startError ? (
           <p className="mt-5 rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-300">{startError}</p>
         ) : null}
@@ -195,6 +240,23 @@ function Tag({ children, tone = "slate" }) {
     <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] ${styles}`}>
       {children}
     </span>
+  );
+}
+
+function ModeCard({ active, description, onClick, title }) {
+  return (
+    <button
+      className={`rounded-2xl border p-4 text-left transition ${
+        active
+          ? "border-ember-500/30 bg-ember-500/10"
+          : "border-white/10 bg-white/5 hover:bg-white/10"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      <p className={`text-sm font-semibold ${active ? "text-ember-300" : "text-white"}`}>{title}</p>
+      <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
+    </button>
   );
 }
 

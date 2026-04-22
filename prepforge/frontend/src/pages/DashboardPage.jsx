@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { codingService } from "../services/codingService";
+import { behavioralService } from "../services/behavioralService";
 import StatsOverview from "../components/dashboard/StatsOverview";
 import RecentSessionsList from "../components/dashboard/RecentSessionsList";
 import EmptyState from "../components/ui/EmptyState";
@@ -13,6 +14,7 @@ function DashboardPage() {
   const navigate = useNavigate();
   const { user, token, isAuthenticated } = useAuth();
   const [analytics, setAnalytics] = useState(null);
+  const [behavioralAnalytics, setBehavioralAnalytics] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -30,13 +32,15 @@ function DashboardPage() {
     setError("");
 
     try {
-      const [analyticsResponse, sessionsResponse, questionsResponse] = await Promise.all([
+      const [analyticsResponse, behavioralAnalyticsResponse, sessionsResponse, questionsResponse] = await Promise.all([
         codingService.getAnalytics(),
+        behavioralService.getAnalytics(),
         codingService.getSessions(),
         codingService.getQuestions(),
       ]);
 
       setAnalytics(analyticsResponse);
+      setBehavioralAnalytics(behavioralAnalyticsResponse);
       setSessions(sessionsResponse);
       setQuestions(questionsResponse);
       setStartForm((current) => ({
@@ -255,6 +259,65 @@ function DashboardPage() {
         </div>
       </section>
 
+      <section className="grid gap-6 xl:grid-cols-[0.9fr,1.1fr]">
+        <div className="panel p-6 sm:p-7">
+          <p className="text-xs uppercase tracking-[0.3em] text-ember-300">Behavioral Progress</p>
+          <h2 className="mt-3 text-2xl font-semibold text-white">Track your story-driven interview reps</h2>
+          <p className="mt-3 text-sm leading-7 text-slate-400">
+            Measure how your behavioral answers are improving across categories, and use the weakest area as your next practice target.
+          </p>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            <DashboardMetric
+              label="Average Score"
+              value={
+                behavioralAnalytics?.averageScore !== null && behavioralAnalytics?.averageScore !== undefined
+                  ? behavioralAnalytics.averageScore.toFixed(1)
+                  : "N/A"
+              }
+            />
+            <DashboardMetric
+              label="Attempts"
+              value={String(behavioralAnalytics?.attemptsCount ?? 0)}
+            />
+            <DashboardMetric
+              label="Weakest Category"
+              value={behavioralAnalytics?.weakestCategory || "Not enough data"}
+            />
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Next Suggestion</p>
+            <p className="mt-3 text-sm leading-7 text-slate-300">
+              {behavioralAnalytics?.weakestCategory
+                ? `Practice more ${behavioralAnalytics.weakestCategory} questions to strengthen your weakest interview pattern.`
+                : "Complete a few behavioral submissions to unlock a personalized practice recommendation."}
+            </p>
+          </div>
+        </div>
+
+        <div className="panel p-6 sm:p-7">
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Behavioral Categories</p>
+          <h2 className="mt-3 text-2xl font-semibold text-white">Where your practice time is going</h2>
+
+          {behavioralAnalytics?.categoryBreakdown && Object.keys(behavioralAnalytics.categoryBreakdown).length ? (
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              {Object.entries(behavioralAnalytics.categoryBreakdown).map(([category, count]) => (
+                <div key={category} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                  <p className="text-xs uppercase tracking-[0.25em] text-slate-500">{category}</p>
+                  <p className="mt-3 text-2xl font-semibold text-white">{count}</p>
+                  <p className="mt-2 text-sm text-slate-400">Recorded attempt{count === 1 ? "" : "s"}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 px-4 py-6 text-sm text-slate-400">
+              No behavioral attempts yet. Start a behavioral session to begin tracking progress by category.
+            </div>
+          )}
+        </div>
+      </section>
+
       <StatsOverview analytics={analytics} />
       <RecentSessionsList sessions={sessions} />
     </div>
@@ -285,6 +348,15 @@ function ModeCard({ active, description, onClick, title }) {
       <p className={`text-sm font-semibold ${active ? "text-ember-300" : "text-white"}`}>{title}</p>
       <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
     </button>
+  );
+}
+
+function DashboardMetric({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+      <p className="text-xs uppercase tracking-[0.25em] text-slate-500">{label}</p>
+      <p className="mt-3 text-2xl font-semibold text-white">{value}</p>
+    </div>
   );
 }
 

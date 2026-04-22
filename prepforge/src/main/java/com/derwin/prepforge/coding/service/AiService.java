@@ -1,6 +1,8 @@
 package com.derwin.prepforge.coding.service;
 
 import com.derwin.prepforge.behavioral.dto.BehavioralFeedbackResponse;
+import com.derwin.prepforge.behavioral.dto.BehavioralImproveRequest;
+import com.derwin.prepforge.behavioral.dto.BehavioralImproveResponse;
 import com.derwin.prepforge.behavioral.entity.BehavioralQuestion;
 import com.derwin.prepforge.coding.dto.ApproachImplementationComparisonResponse;
 import com.derwin.prepforge.coding.dto.CodingImprovementResponse;
@@ -116,16 +118,34 @@ public class AiService {
             - impact
             - communication readiness
 
+            If a previous attempt is provided, compare the current answer against it and identify concrete improvements and regressions.
+
             Return JSON only with:
             - score
             - summary
+            - improvements
+            - regressions
             - strengths
             - weaknesses
             - recommendations
 
             Keep the feedback honest, practical, and concise.
             score must be an integer from 0 to 10.
-            strengths, weaknesses, and recommendations must each be arrays of short strings.
+            improvements, regressions, strengths, weaknesses, and recommendations must each be arrays of short strings.
+            recommendations must include:
+            - one measurable metric suggestion
+            - one stronger action detail suggestion
+            - one improvement for the Result section
+            """;
+    private static final String BEHAVIORAL_IMPROVEMENT_SYSTEM_PROMPT = """
+            You are a senior behavioral interview coach rewriting a candidate's answer.
+
+            Rewrite the answer with a stronger STAR structure.
+            Preserve the candidate's voice while improving clarity, structure, action detail, and impact.
+            Do not invent unrealistic facts or metrics.
+
+            Return JSON only with:
+            - improvedResponse
             """;
 
     private final RestTemplate restTemplate;
@@ -221,15 +241,34 @@ public class AiService {
         }
     }
 
-    public BehavioralFeedbackResponse evaluateBehavioralResponse(BehavioralQuestion question, String responseText) {
+    public BehavioralFeedbackResponse evaluateBehavioralResponse(
+            BehavioralQuestion question,
+            String previousResponseText,
+            String responseText) {
         try {
             String rawJson = executeStructuredResponse(
                     "behavioral_feedback",
                     BEHAVIORAL_EVALUATION_SYSTEM_PROMPT,
-                    buildBehavioralEvaluationPrompt(question, responseText),
+                    buildBehavioralEvaluationPrompt(question, previousResponseText, responseText),
                     buildBehavioralFeedbackSchema());
 
             return objectMapper.readValue(rawJson, BehavioralFeedbackResponse.class);
+        } catch (RestClientException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
+        } catch (JsonProcessingException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
+        }
+    }
+
+    public BehavioralImproveResponse improveBehavioralResponse(BehavioralImproveRequest request) {
+        try {
+            String rawJson = executeStructuredResponse(
+                    "behavioral_improvement",
+                    BEHAVIORAL_IMPROVEMENT_SYSTEM_PROMPT,
+                    buildBehavioralImprovementPrompt(request),
+                    buildBehavioralImprovementSchema());
+
+            return objectMapper.readValue(rawJson, BehavioralImproveResponse.class);
         } catch (RestClientException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
         } catch (JsonProcessingException exception) {
@@ -370,7 +409,10 @@ public class AiService {
                 defaultIfBlank(submission.getAiFeedback(), "No prior AI feedback available."));
     }
 
-    private String buildBehavioralEvaluationPrompt(BehavioralQuestion question, String responseText) {
+    private String buildBehavioralEvaluationPrompt(
+            BehavioralQuestion question,
+            String previousResponseText,
+            String responseText) {
         return """
                 Evaluate this behavioral interview response.
 
@@ -383,13 +425,42 @@ public class AiService {
                 Difficulty:
                 %s
 
+                Previous Attempt:
+                %s
+
                 Candidate Response:
                 %s
                 """.formatted(
                 question.getQuestionText(),
                 question.getCategory(),
                 question.getDifficulty(),
+                defaultIfBlank(previousResponseText, "No previous attempt available."),
                 defaultIfBlank(responseText, "No response provided."));
+    }
+
+    private String buildBehavioralImprovementPrompt(BehavioralImproveRequest request) {
+        List<String> strengths = request.getFeedback() == null || request.getFeedback().getStrengths() == null
+                ? List.of()
+                : request.getFeedback().getStrengths();
+        List<String> weaknesses = request.getFeedback() == null || request.getFeedback().getWeaknesses() == null
+                ? List.of()
+                : request.getFeedback().getWeaknesses();
+
+        return """
+                Improve this behavioral interview answer.
+
+                Original Response:
+                %s
+
+                Strengths To Preserve:
+                %s
+
+                Weaknesses To Fix:
+                %s
+                """.formatted(
+                defaultIfBlank(request.getResponseText(), "No response provided."),
+                strengths.isEmpty() ? "No strengths provided." : String.join("; ", strengths),
+                weaknesses.isEmpty() ? "No weaknesses provided." : String.join("; ", weaknesses));
     }
 
     private Map<String, Object> buildFeedbackSchema() {
@@ -483,6 +554,12 @@ public class AiService {
                                 "minimum", 0,
                                 "maximum", 10),
                         "summary", Map.of("type", "string"),
+                        "improvements", Map.of(
+                                "type", "array",
+                                "items", Map.of("type", "string")),
+                        "regressions", Map.of(
+                                "type", "array",
+                                "items", Map.of("type", "string")),
                         "strengths", Map.of(
                                 "type", "array",
                                 "items", Map.of("type", "string")),
@@ -492,7 +569,23 @@ public class AiService {
                         "recommendations", Map.of(
                                 "type", "array",
                                 "items", Map.of("type", "string"))),
-                "required", List.of("score", "summary", "strengths", "weaknesses", "recommendations"));
+                "required", List.of(
+                        "score",
+                        "summary",
+                        "improvements",
+                        "regressions",
+                        "strengths",
+                        "weaknesses",
+                        "recommendations"));
+    }
+
+    private Map<String, Object> buildBehavioralImprovementSchema() {
+        return Map.of(
+                "type", "object",
+                "additionalProperties", false,
+                "properties", Map.of(
+                        "improvedResponse", Map.of("type", "string")),
+                "required", List.of("improvedResponse"));
     }
 
     private String executeStructuredResponse(

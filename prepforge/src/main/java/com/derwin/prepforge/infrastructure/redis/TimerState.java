@@ -1,4 +1,4 @@
-package com.derwin.prepforge.behavioral.dto;
+package com.derwin.prepforge.infrastructure.redis;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -13,13 +13,9 @@ import lombok.Setter;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class BehavioralSessionResponse {
+public class TimerState {
     private UUID sessionId;
-    private UUID questionId;
-    private String status;
-    private boolean isTimed;
-    private Integer timeLimitSeconds;
+    private UUID userId;
     private Instant expiresAt;
-    private boolean expired;
-    private Instant startedAt;
+    private TimedSessionType sessionType;
 }

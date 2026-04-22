@@ -10,10 +10,14 @@ import com.derwin.prepforge.coding.entity.SubmissionStatus;
 import com.derwin.prepforge.coding.repository.CodingQuestionRepository;
 import com.derwin.prepforge.coding.repository.CodingSessionRepository;
 import com.derwin.prepforge.coding.repository.CodingSubmissionRepository;
+import com.derwin.prepforge.infrastructure.redis.TimedSessionType;
+import com.derwin.prepforge.infrastructure.redis.TimerState;
+import com.derwin.prepforge.infrastructure.redis.TimerStateStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +39,7 @@ public class CodingService {
     private final AiService aiService;
     private final CodeExecutionService codeExecutionService;
     private final ObjectMapper objectMapper;
+    private final TimerStateStore timerStateStore;
 
     @Transactional
     public CodingSessionResponse startSession(CodingSessionRequest request) {
@@ -54,6 +59,7 @@ public class CodingService {
                 .startedAt(startedAt)
                 .build());
 
+        cacheTimerState(session);
         return mapSession(session);
     }
 
@@ -69,6 +75,7 @@ public class CodingService {
         UUID userId = getCurrentUser().getId();
 
         return codingSessionRepository.findByUserIdOrderByStartedAtDesc(userId).stream()
+                .peek(this::expireSessionIfNeeded)
                 .map(this::mapSession)
                 .toList();
     }
@@ -107,6 +114,7 @@ public class CodingService {
     @Transactional(readOnly = true)
     public CodingSessionDetailResponse getSessionDetail(UUID sessionId) {
         CodingSession session = getOwnedSession(sessionId);
+        expireSessionIfNeeded(session);
         CodingQuestion question = getQuestionEntity(session.getQuestionId());
         List<CodingSubmissionResponse> submissions = codingSubmissionRepository
                 .findBySessionIdOrderBySubmittedAtDesc(session.getId()).stream()
@@ -204,6 +212,7 @@ public class CodingService {
         CodingSubmission savedSubmission = codingSubmissionRepository.save(submission);
         session.setStatus(CodingSessionStatus.COMPLETED);
         codingSessionRepository.save(session);
+        clearTimerState(session);
 
         return mapSubmission(savedSubmission);
     }
@@ -419,7 +428,9 @@ public class CodingService {
     }
 
     private CodingSessionResponse mapSession(CodingSession session) {
-        boolean expired = isSessionExpired(session);
+        Optional<TimerState> timerState = resolveTimerState(session);
+        Instant expiresAt = timerState.map(TimerState::getExpiresAt).orElse(session.getExpiresAt());
+        boolean expired = isSessionExpired(session, expiresAt);
 
         return CodingSessionResponse.builder()
                 .sessionId(session.getId())
@@ -429,7 +440,7 @@ public class CodingService {
                         : session.getStatus())
                 .timedMode(session.isTimedMode())
                 .durationMinutes(session.getDurationMinutes())
-                .expiresAt(session.getExpiresAt())
+                .expiresAt(expiresAt)
                 .expired(expired)
                 .startedAt(session.getStartedAt())
                 .build();
@@ -469,15 +480,69 @@ public class CodingService {
     }
 
     private boolean isSessionExpired(CodingSession session) {
+        return isSessionExpired(session, session.getExpiresAt());
+    }
+
+    private boolean isSessionExpired(CodingSession session, Instant expiresAt) {
         return session.isTimedMode()
-                && session.getExpiresAt() != null
-                && !Instant.now().isBefore(session.getExpiresAt());
+                && expiresAt != null
+                && !Instant.now().isBefore(expiresAt);
     }
 
     private void expireSessionIfNeeded(CodingSession session) {
         if (isSessionExpired(session) && session.getStatus() == CodingSessionStatus.STARTED) {
             session.setStatus(CodingSessionStatus.EXPIRED);
             codingSessionRepository.save(session);
+            clearTimerState(session);
         }
+    }
+
+    private Optional<TimerState> resolveTimerState(CodingSession session) {
+        if (!session.isTimedMode() || session.getExpiresAt() == null) {
+            return Optional.empty();
+        }
+
+        Optional<TimerState> cachedState = timerStateStore.find(session.getId(), TimedSessionType.CODING);
+        if (cachedState.isPresent()) {
+            return cachedState;
+        }
+
+        if (isSessionExpired(session) || session.getStatus() != CodingSessionStatus.STARTED) {
+            clearTimerState(session);
+            return Optional.empty();
+        }
+
+        TimerState fallbackState = buildTimerState(
+                session.getId(),
+                session.getUserId(),
+                session.getExpiresAt(),
+                TimedSessionType.CODING);
+        timerStateStore.save(fallbackState);
+        return Optional.of(fallbackState);
+    }
+
+    private void cacheTimerState(CodingSession session) {
+        if (!session.isTimedMode() || session.getExpiresAt() == null || session.getStatus() != CodingSessionStatus.STARTED) {
+            return;
+        }
+
+        timerStateStore.save(buildTimerState(
+                session.getId(),
+                session.getUserId(),
+                session.getExpiresAt(),
+                TimedSessionType.CODING));
+    }
+
+    private void clearTimerState(CodingSession session) {
+        timerStateStore.delete(session.getId(), TimedSessionType.CODING);
+    }
+
+    private TimerState buildTimerState(UUID sessionId, UUID userId, Instant expiresAt, TimedSessionType sessionType) {
+        return TimerState.builder()
+                .sessionId(sessionId)
+                .userId(userId)
+                .expiresAt(expiresAt)
+                .sessionType(sessionType)
+                .build();
     }
 }
