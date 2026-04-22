@@ -1,3 +1,24 @@
 spring:
-  application:
-    name: prepforge
+  datasource:
+    url: jdbc:postgresql://localhost:5433/PrepForge
+    username: postgres
+    password: Noah2511
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:your-secret}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+openai:
+  api-key: ${OPENAI_API_KEY:}
+  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+  model: ${OPENAI_MODEL:gpt-5-mini}

@@ -1,0 +1,37 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply min-h-screen bg-forge-radial bg-forge-950 text-slate-100 antialiased;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-3xl border border-white/10 bg-forge-900/80 backdrop-blur;
+  }
+
+  .panel-soft {
+    @apply rounded-2xl border border-white/10 bg-forge-850/80;
+  }
+
+  .text-muted {
+    @apply text-sm text-slate-400;
+  }
+
+  .ember-ring {
+    @apply focus:border-ember-500 focus:outline-none focus:ring-2 focus:ring-ember-500/30;
+  }
+}
