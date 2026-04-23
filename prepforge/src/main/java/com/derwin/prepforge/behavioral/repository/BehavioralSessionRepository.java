@@ -9,5 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface BehavioralSessionRepository extends JpaRepository<BehavioralSession, UUID> {
     Optional<BehavioralSession> findByIdAndUserId(UUID id, UUID userId);
 
+    List<BehavioralSession> findByUserIdOrderByStartedAtDesc(UUID userId);
+
     List<BehavioralSession> findByIdIn(List<UUID> ids);
 }

@@ -14,6 +14,11 @@ import com.derwin.prepforge.coding.entity.SubmissionStatus;
 import com.derwin.prepforge.coding.repository.CodingQuestionRepository;
 import com.derwin.prepforge.coding.repository.CodingSessionRepository;
 import com.derwin.prepforge.coding.repository.CodingSubmissionRepository;
+import com.derwin.prepforge.execution.ExecutionGateway;
+import com.derwin.prepforge.execution.ExecutionRequest;
+import com.derwin.prepforge.execution.ExecutionResult;
+import com.derwin.prepforge.execution.TestCaseExecutionResult;
+import com.derwin.prepforge.infrastructure.observability.PrepForgeMetrics;
 import com.derwin.prepforge.infrastructure.redis.TimedSessionType;
 import com.derwin.prepforge.infrastructure.redis.TimerState;
 import com.derwin.prepforge.infrastructure.redis.TimerStateStore;
@@ -45,10 +50,12 @@ public class CodingService {
     private final AnalyticsCacheService analyticsCacheService;
     private final AiService aiService;
     private final AiRateLimitService aiRateLimitService;
-    private final CodeExecutionService codeExecutionService;
+    private final ExecutionGateway executionGateway;
+    private final CodingExecutionRequestFactory codingExecutionRequestFactory;
     private final ObjectMapper objectMapper;
     private final TimerStateStore timerStateStore;
     private final SessionSummaryService sessionSummaryService;
+    private final PrepForgeMetrics prepForgeMetrics;
 
     @Transactional
     public CodingSessionResponse startSession(CodingSessionRequest request) {
@@ -69,7 +76,7 @@ public class CodingService {
                 .build());
 
         cacheTimerState(session);
-        analyticsCacheService.evict(userId, AnalyticsCacheType.CODING_SUMMARY);
+        analyticsCacheService.evictAllAnalytics(userId);
         sessionSummaryService.invalidateCodingSummary(session.getId());
         return mapSession(session);
     }
@@ -212,7 +219,7 @@ public class CodingService {
         session.setStatus(CodingSessionStatus.COMPLETED);
         codingSessionRepository.save(session);
         clearTimerState(session);
-        analyticsCacheService.evict(session.getUserId(), AnalyticsCacheType.CODING_SUMMARY);
+        analyticsCacheService.evictAllAnalytics(session.getUserId());
         sessionSummaryService.invalidateCodingSummary(session.getId());
 
         return mapSubmission(savedSubmission);
@@ -245,127 +252,49 @@ public class CodingService {
         CodingSession session = getOwnedSession(sessionId);
         CodingQuestion question = getQuestionEntity(session.getQuestionId());
         validateRunLanguage(request);
-        List<CodeExecutionService.ExecutionTestCase> testCases = buildExecutionTestCases(question);
+        ExecutionRequest executionRequest = codingExecutionRequestFactory.build(question, request);
 
-        if (testCases.isEmpty()) {
-            return RunCodeResponse.builder()
-                    .success(true)
-                    .passedTests(0)
-                    .totalTests(0)
-                    .error(null)
-                    .compileError(null)
-                    .runtimeError(null)
-                    .timedOut(false)
-                    .testResults(List.of())
-                    .results(List.of())
-                    .build();
-        }
-
-        CodeExecutionService.JavaHarnessFactory harnessFactory = buildHarnessFactory(question);
-        return codeExecutionService.executeJava(request.getSolutionCode(), testCases, harnessFactory);
-    }
-
-    private List<CodeExecutionService.ExecutionTestCase> buildExecutionTestCases(CodingQuestion question) {
-        String normalizedTitle = question.getTitle() == null ? "" : question.getTitle().trim().toLowerCase();
-
-        if ("two sum".equals(normalizedTitle)) {
-            return List.of(
-                    new CodeExecutionService.ExecutionTestCase(
-                            "[2,7,11,15], 9",
-                            "2 7 11 15\n9\n",
-                            "[0,1]"),
-                    new CodeExecutionService.ExecutionTestCase(
-                            "[3,2,4], 6",
-                            "3 2 4\n6\n",
-                            "[1,2]")
-            );
-        }
-
-        if ("valid palindrome".equals(normalizedTitle)) {
-            return List.of(
-                    new CodeExecutionService.ExecutionTestCase(
-                            "\"A man, a plan, a canal: Panama\"",
-                            "A man, a plan, a canal: Panama\n",
-                            "true"),
-                    new CodeExecutionService.ExecutionTestCase(
-                            "\"race a car\"",
-                            "race a car\n",
-                            "false")
-            );
-        }
-
-        return List.of();
-    }
-
-    private CodeExecutionService.JavaHarnessFactory buildHarnessFactory(CodingQuestion question) {
-        String normalizedTitle = question.getTitle() == null ? "" : question.getTitle().trim().toLowerCase();
-
-        if ("two sum".equals(normalizedTitle)) {
-            return solutionClassName -> """
-                    import java.io.BufferedReader;
-                    import java.io.InputStreamReader;
-                    import java.lang.reflect.Method;
-                    import java.util.Arrays;
-                    import java.util.stream.IntStream;
-
-                    public class PrepForgeHarness {
-                        public static void main(String[] args) throws Exception {
-                            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-                            String numbersLine = reader.readLine();
-                            String targetLine = reader.readLine();
-
-                            int[] nums = Arrays.stream(numbersLine.trim().split("\\\\s+"))
-                                    .filter(part -> !part.isBlank())
-                                    .mapToInt(Integer::parseInt)
-                                    .toArray();
-                            int target = Integer.parseInt(targetLine.trim());
-
-                            Class<?> solutionClass = Class.forName("%s");
-                            Object solution = solutionClass.getDeclaredConstructor().newInstance();
-                            Method method = solutionClass.getMethod("twoSum", int[].class, int.class);
-                            int[] result = (int[]) method.invoke(solution, nums, target);
-
-                            String output = IntStream.of(result)
-                                    .mapToObj(String::valueOf)
-                                    .reduce((left, right) -> left + "," + right)
-                                    .map(value -> "[" + value + "]")
-                                    .orElse("[]");
-
-                            System.out.print(output);
-                        }
-                    }
-                    """.formatted(solutionClassName);
-        }
-
-        if ("valid palindrome".equals(normalizedTitle)) {
-            return solutionClassName -> """
-                    import java.io.BufferedReader;
-                    import java.io.InputStreamReader;
-                    import java.lang.reflect.Method;
-
-                    public class PrepForgeHarness {
-                        public static void main(String[] args) throws Exception {
-                            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-                            String value = reader.readLine();
-
-                            Class<?> solutionClass = Class.forName("%s");
-                            Object solution = solutionClass.getDeclaredConstructor().newInstance();
-                            Method method = solutionClass.getMethod("isPalindrome", String.class);
-                            boolean result = (boolean) method.invoke(solution, value);
-
-                            System.out.print(result);
-                        }
-                    }
-                    """.formatted(solutionClassName);
-        }
-
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported coding question for execution");
+        // CodingService remains the orchestration layer. The gateway owns the compile/run mechanics,
+        // which gives us a clean seam if execution later moves out of process.
+        ExecutionResult executionResult = executionGateway.execute(executionRequest);
+        return mapRunCodeResponse(executionResult);
     }
 
     private void validateRunLanguage(RunCodeRequest request) {
         if (request.getLanguage() == null || !request.getLanguage().equalsIgnoreCase("java")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only Java execution is currently supported");
         }
+    }
+
+    private RunCodeResponse mapRunCodeResponse(ExecutionResult executionResult) {
+        List<RunTestResultResponse> results = executionResult.getTestResults() == null
+                ? List.of()
+                : executionResult.getTestResults().stream()
+                        .map(this::mapTestResult)
+                        .toList();
+
+        return RunCodeResponse.builder()
+                .success(executionResult.isSuccess())
+                .passedTests(executionResult.getPassedTests())
+                .totalTests(executionResult.getTotalTests())
+                .error(executionResult.getError())
+                .compileError(executionResult.getCompileError())
+                .friendlyMessage(executionResult.getFriendlyMessage())
+                .rawOutput(executionResult.getRawOutput())
+                .runtimeError(executionResult.getRuntimeError())
+                .timedOut(executionResult.isTimedOut())
+                .testResults(results)
+                .results(results)
+                .build();
+    }
+
+    private RunTestResultResponse mapTestResult(TestCaseExecutionResult result) {
+        return RunTestResultResponse.builder()
+                .input(result.getInput())
+                .expectedOutput(result.getExpectedOutput())
+                .actualOutput(result.getActualOutput())
+                .passed(result.isPassed())
+                .build();
     }
 
     private CodingQuestion getQuestionEntity(UUID questionId) {
@@ -525,6 +454,7 @@ public class CodingService {
             session.setStatus(CodingSessionStatus.EXPIRED);
             codingSessionRepository.save(session);
             clearTimerState(session);
+            prepForgeMetrics.incrementTimerExpiration(TimedSessionType.CODING.name());
         }
     }
 

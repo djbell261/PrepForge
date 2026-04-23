@@ -2,6 +2,7 @@ package com.derwin.prepforge.security;
 
 import com.derwin.prepforge.auth.repository.UserRepository;
 import com.derwin.prepforge.auth.security.JwtAuthFilter;
+import com.derwin.prepforge.common.logging.RequestCorrelationFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,10 +23,15 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final RequestCorrelationFilter requestCorrelationFilter;
     private final UserRepository userRepository;
 
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter, UserRepository userRepository) {
+    public SecurityConfig(
+            JwtAuthFilter jwtAuthFilter,
+            RequestCorrelationFilter requestCorrelationFilter,
+            UserRepository userRepository) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.requestCorrelationFilter = requestCorrelationFilter;
         this.userRepository = userRepository;
     }
 
@@ -62,6 +68,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .anyRequest().authenticated())
+                .addFilterBefore(requestCorrelationFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

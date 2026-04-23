@@ -10,11 +10,13 @@ import com.derwin.prepforge.behavioral.entity.BehavioralSubmission;
 import com.derwin.prepforge.behavioral.repository.BehavioralQuestionRepository;
 import com.derwin.prepforge.behavioral.repository.BehavioralSessionRepository;
 import com.derwin.prepforge.behavioral.repository.BehavioralSubmissionRepository;
+import com.derwin.prepforge.common.logging.LoggingContext;
 import com.derwin.prepforge.coding.service.AiService;
 import com.derwin.prepforge.summary.SessionSummaryService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,7 +57,23 @@ public class AsyncJobWorker {
     }
 
     private void processJob(AsyncJob job) {
+        Map<String, String> previousContext = LoggingContext.capture();
+        LoggingContext.putCorrelationId(job.getCorrelationId());
+        LoggingContext.putJobContext(
+                job.getId().toString(),
+                job.getJobType().name(),
+                job.getAggregateType().name(),
+                job.getAggregateId().toString());
+
         try {
+            log.info(
+                    "async_job_processing_start jobId={} jobType={} aggregateType={} aggregateId={} correlationId={}",
+                    job.getId(),
+                    job.getJobType(),
+                    job.getAggregateType(),
+                    job.getAggregateId(),
+                    job.getCorrelationId());
+
             if (job.getJobType() == AsyncJobType.BEHAVIORAL_FEEDBACK_GENERATION) {
                 processBehavioralFeedbackJob(job);
                 asyncJobService.markSucceeded(job.getId());
@@ -76,7 +94,16 @@ public class AsyncJobWorker {
         } catch (Exception exception) {
             AsyncJobFailureCode failureCode = classifyFailureCode(exception);
             asyncJobService.markFailedOrRetry(job.getId(), failureCode, exception.getMessage(), isRetryable(exception));
-            log.warn("Async job {} failed", job.getId(), exception);
+            log.warn(
+                    "async_job_processing_exception jobId={} jobType={} aggregateType={} aggregateId={} correlationId={}",
+                    job.getId(),
+                    job.getJobType(),
+                    job.getAggregateType(),
+                    job.getAggregateId(),
+                    job.getCorrelationId(),
+                    exception);
+        } finally {
+            LoggingContext.restore(previousContext);
         }
     }
 
@@ -109,7 +136,13 @@ public class AsyncJobWorker {
 
         submission.setAiFeedback(objectMapper.writeValueAsString(feedback));
         behavioralSubmissionRepository.save(submission);
-        analyticsCacheService.evict(submission.getUserId(), AnalyticsCacheType.BEHAVIORAL_SUMMARY);
+        log.info(
+                "behavioral_feedback_saved submissionId={} sessionId={} userId={} score={}",
+                submission.getId(),
+                session.getId(),
+                submission.getUserId(),
+                feedback.getScore());
+        analyticsCacheService.evictAllAnalytics(submission.getUserId());
         sessionSummaryService.invalidateBehavioralSummary(session.getId());
         enqueueComparisonJobIfNeeded(submission);
     }
@@ -148,7 +181,14 @@ public class AsyncJobWorker {
         currentFeedback.setRegressions(analysis.getRegressions());
         submission.setAiFeedback(objectMapper.writeValueAsString(currentFeedback));
         behavioralSubmissionRepository.save(submission);
-        analyticsCacheService.evict(submission.getUserId(), AnalyticsCacheType.BEHAVIORAL_SUMMARY);
+        log.info(
+                "behavioral_comparison_saved submissionId={} sessionId={} userId={} improvementsCount={} regressionsCount={}",
+                submission.getId(),
+                session.getId(),
+                submission.getUserId(),
+                analysis.getImprovements() == null ? 0 : analysis.getImprovements().size(),
+                analysis.getRegressions() == null ? 0 : analysis.getRegressions().size());
+        analyticsCacheService.evictAllAnalytics(submission.getUserId());
         sessionSummaryService.invalidateBehavioralSummary(session.getId());
     }
 

@@ -31,6 +31,7 @@ import com.derwin.prepforge.infrastructure.redis.TimerStateStore;
 import com.derwin.prepforge.jobs.AsyncJob;
 import com.derwin.prepforge.jobs.AsyncJobService;
 import com.derwin.prepforge.jobs.AsyncJobStatus;
+import com.derwin.prepforge.infrastructure.observability.PrepForgeMetrics;
 import com.derwin.prepforge.summary.SessionSummaryService;
 import com.derwin.prepforge.summary.dto.SessionSummaryResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -64,6 +65,7 @@ public class BehavioralService {
     private final ObjectMapper objectMapper;
     private final TimerStateStore timerStateStore;
     private final SessionSummaryService sessionSummaryService;
+    private final PrepForgeMetrics prepForgeMetrics;
 
     @Transactional(readOnly = true)
     public List<BehavioralQuestionResponse> getQuestions() {
@@ -222,12 +224,13 @@ public class BehavioralService {
                 .aiFeedback(null)
                 .submittedAt(Instant.now())
                 .build());
+        prepForgeMetrics.incrementBehavioralSubmission();
         AsyncJob feedbackJob = asyncJobService.enqueueBehavioralFeedbackGeneration(submission.getId());
 
         session.setStatus(BehavioralSessionStatus.COMPLETED);
         behavioralSessionRepository.save(session);
         clearTimerState(session);
-        analyticsCacheService.evict(session.getUserId(), AnalyticsCacheType.BEHAVIORAL_SUMMARY);
+        analyticsCacheService.evictAllAnalytics(session.getUserId());
         sessionSummaryService.invalidateBehavioralSummary(session.getId());
 
         return mapSubmission(submission, Optional.of(feedbackJob));
@@ -365,6 +368,7 @@ public class BehavioralService {
             session.setStatus(BehavioralSessionStatus.EXPIRED);
             behavioralSessionRepository.save(session);
             clearTimerState(session);
+            prepForgeMetrics.incrementTimerExpiration(TimedSessionType.BEHAVIORAL.name());
         }
     }
 

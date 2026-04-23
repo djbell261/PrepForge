@@ -1,8 +1,7 @@
-package com.derwin.prepforge.coding.service;
+package com.derwin.prepforge.execution;
 
 import com.derwin.prepforge.coding.dto.CompileError;
-import com.derwin.prepforge.coding.dto.RunCodeResponse;
-import com.derwin.prepforge.coding.dto.RunTestResultResponse;
+import com.derwin.prepforge.infrastructure.observability.PrepForgeMetrics;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,10 +16,12 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.springframework.stereotype.Service;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
 
-@Service
-public class CodeExecutionService {
+@Component
+@RequiredArgsConstructor
+public class JavaExecutionGateway implements ExecutionGateway {
     private static final Pattern PUBLIC_CLASS_PATTERN = Pattern.compile("public\\s+class\\s+(\\w+)");
     private static final Pattern CLASS_PATTERN = Pattern.compile("\\bclass\\s+(\\w+)");
     private static final Pattern JAVAC_ERROR_PATTERN =
@@ -29,13 +30,23 @@ public class CodeExecutionService {
     private static final String GENERIC_COMPILE_HINT =
             "Java could not compile this code. Review the error details and check your syntax, names, and types.";
 
-    public RunCodeResponse executeJava(String userCode, List<ExecutionTestCase> testCases, JavaHarnessFactory harnessFactory) {
+    private final PrepForgeMetrics prepForgeMetrics;
+
+    @Override
+    public ExecutionResult execute(ExecutionRequest request) {
+        if (request == null || request.getLanguage() == null || !request.getLanguage().equalsIgnoreCase("java")) {
+            throw new IllegalArgumentException("Only Java execution is currently supported");
+        }
+
         Path tempDir = null;
+        String language = request.getLanguage().toLowerCase();
+        prepForgeMetrics.incrementExecutionRequest(language);
+        long startedAtNanos = System.nanoTime();
 
         try {
             tempDir = Files.createTempDirectory("prepforge-java-run-" + UUID.randomUUID());
 
-            PreparedJavaCode preparedCode = prepareJavaCode(userCode);
+            PreparedJavaCode preparedCode = prepareJavaCode(request.getSourceCode());
             Files.writeString(
                     tempDir.resolve(preparedCode.className() + ".java"),
                     preparedCode.sourceCode(),
@@ -43,7 +54,7 @@ public class CodeExecutionService {
 
             Files.writeString(
                     tempDir.resolve("PrepForgeHarness.java"),
-                    harnessFactory.build(preparedCode.className()),
+                    request.getHarnessSource().formatted(preparedCode.className()),
                     StandardCharsets.UTF_8);
 
             ProcessResult compileResult = runProcess(
@@ -52,53 +63,51 @@ public class CodeExecutionService {
                     null);
 
             if (!compileResult.completedInTime()) {
+                prepForgeMetrics.incrementExecutionTimeout(language, "compile");
                 return buildCompileErrorResponse("Compilation timed out.", true);
             }
 
             if (compileResult.exitCode() != 0) {
+                prepForgeMetrics.incrementExecutionCompileFailure(language);
                 return buildCompileErrorResponse(trimToNull(compileResult.stderr()), false);
             }
 
-            List<RunTestResultResponse> results = new ArrayList<>();
+            List<TestCaseExecutionResult> results = new ArrayList<>();
+            List<ExecutionTestCase> testCases = request.getTestCases() == null ? List.of() : request.getTestCases();
 
             for (ExecutionTestCase testCase : testCases) {
                 ProcessResult runResult = runProcess(
                         List.of("java", "PrepForgeHarness"),
                         tempDir,
-                        testCase.programInput());
+                        testCase.getProgramInput());
 
                 if (!runResult.completedInTime()) {
-                    return buildErrorResponse(
-                            "Execution timed out.",
-                            null,
-                            "Execution timed out.",
-                            true);
+                    prepForgeMetrics.incrementExecutionTimeout(language, "run");
+                    return buildRuntimeErrorResponse("Execution timed out.", true);
                 }
 
                 if (runResult.exitCode() != 0) {
-                    return buildErrorResponse(
-                            trimToNull(runResult.stderr()),
-                            null,
-                            trimToNull(runResult.stderr()),
-                            false);
+                    prepForgeMetrics.incrementExecutionRuntimeFailure(language);
+                    return buildRuntimeErrorResponse(trimToNull(runResult.stderr()), false);
                 }
 
                 String actualOutput = normalizeOutput(runResult.stdout());
-                boolean passed = actualOutput.equals(normalizeOutput(testCase.expectedOutput()));
+                boolean passed = actualOutput.equals(normalizeOutput(testCase.getExpectedOutput()));
 
-                results.add(RunTestResultResponse.builder()
-                        .input(testCase.displayInput())
-                        .expectedOutput(testCase.expectedOutput())
+                results.add(TestCaseExecutionResult.builder()
+                        .input(testCase.getDisplayInput())
+                        .expectedOutput(testCase.getExpectedOutput())
                         .actualOutput(actualOutput)
                         .passed(passed)
                         .build());
             }
 
             long passedTests = results.stream()
-                    .filter(RunTestResultResponse::isPassed)
+                    .filter(TestCaseExecutionResult::isPassed)
                     .count();
 
-            return RunCodeResponse.builder()
+            prepForgeMetrics.incrementExecutionSuccess(language);
+            return ExecutionResult.builder()
                     .success(passedTests == results.size())
                     .passedTests((int) passedTests)
                     .totalTests(results.size())
@@ -109,14 +118,18 @@ public class CodeExecutionService {
                     .runtimeError(null)
                     .timedOut(false)
                     .testResults(results)
-                    .results(results)
                     .build();
         } catch (IOException exception) {
-            return buildErrorResponse("Failed to execute Java code.", null, exception.getMessage(), false);
+            prepForgeMetrics.incrementExecutionRuntimeFailure(language);
+            return buildRuntimeErrorResponse("Failed to execute Java code.", false, exception.getMessage());
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            return buildErrorResponse("Execution was interrupted.", null, "Execution was interrupted.", false);
+            prepForgeMetrics.incrementExecutionRuntimeFailure(language);
+            return buildRuntimeErrorResponse("Execution was interrupted.", false);
         } finally {
+            prepForgeMetrics.recordExecutionDuration(
+                    language,
+                    Duration.ofNanos(System.nanoTime() - startedAtNanos));
             deleteRecursively(tempDir);
         }
     }
@@ -198,31 +211,30 @@ public class CodeExecutionService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    private RunCodeResponse buildErrorResponse(
-            String error,
-            String compileError,
-            String runtimeError,
-            boolean timedOut) {
-        return RunCodeResponse.builder()
+    private ExecutionResult buildRuntimeErrorResponse(String runtimeError, boolean timedOut) {
+        return buildRuntimeErrorResponse(runtimeError, timedOut, runtimeError);
+    }
+
+    private ExecutionResult buildRuntimeErrorResponse(String runtimeError, boolean timedOut, String rawOutput) {
+        return ExecutionResult.builder()
                 .success(false)
                 .passedTests(null)
                 .totalTests(null)
-                .error(error)
+                .error(runtimeError)
                 .compileError(null)
                 .friendlyMessage(null)
-                .rawOutput(runtimeError)
+                .rawOutput(rawOutput)
                 .runtimeError(runtimeError)
                 .timedOut(timedOut)
                 .testResults(List.of())
-                .results(List.of())
                 .build();
     }
 
-    private RunCodeResponse buildCompileErrorResponse(String rawCompilerOutput, boolean timedOut) {
+    private ExecutionResult buildCompileErrorResponse(String rawCompilerOutput, boolean timedOut) {
         String normalizedOutput = trimToNull(rawCompilerOutput);
         CompileError compileError = parseCompileError(normalizedOutput);
 
-        return RunCodeResponse.builder()
+        return ExecutionResult.builder()
                 .success(false)
                 .passedTests(null)
                 .totalTests(null)
@@ -233,7 +245,6 @@ public class CodeExecutionService {
                 .runtimeError(null)
                 .timedOut(timedOut)
                 .testResults(List.of())
-                .results(List.of())
                 .build();
     }
 
@@ -334,16 +345,6 @@ public class CodeExecutionService {
                     });
         } catch (IOException ignored) {
         }
-    }
-
-    public record ExecutionTestCase(
-            String displayInput,
-            String programInput,
-            String expectedOutput) {
-    }
-
-    public interface JavaHarnessFactory {
-        String build(String solutionClassName);
     }
 
     private record PreparedJavaCode(String className, String sourceCode) {

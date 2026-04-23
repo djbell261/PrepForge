@@ -79,3 +79,16 @@ openai:
   api-key: ${OPENAI_API_KEY:}
   base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
   model: ${OPENAI_MODEL:gpt-5-mini}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} level=%-5level requestId=%X{requestId:-} correlationId=%X{correlationId:-} jobId=%X{jobId:-} jobType=%X{jobType:-} aggregateType=%X{aggregateType:-} aggregateId=%X{aggregateId:-} logger=%logger{36} - %msg%n%wEx"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when_authorized

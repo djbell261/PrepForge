@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { codingService } from "../services/codingService";
 import { behavioralService } from "../services/behavioralService";
+import { dashboardService } from "../services/dashboardService";
 import StatsOverview from "../components/dashboard/StatsOverview";
 import RecentSessionsList from "../components/dashboard/RecentSessionsList";
 import EmptyState from "../components/ui/EmptyState";
@@ -17,6 +18,8 @@ function DashboardPage() {
   const [behavioralAnalytics, setBehavioralAnalytics] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [questions, setQuestions] = useState([]);
+  const [coachingSummary, setCoachingSummary] = useState(null);
+  const [coachingSummaryError, setCoachingSummaryError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [startForm, setStartForm] = useState({
@@ -30,24 +33,59 @@ function DashboardPage() {
   const loadDashboard = async () => {
     setIsLoading(true);
     setError("");
+    setCoachingSummaryError("");
 
     try {
-      const [analyticsResponse, behavioralAnalyticsResponse, sessionsResponse, questionsResponse] = await Promise.all([
+      const [
+        analyticsResponse,
+        behavioralAnalyticsResponse,
+        sessionsResponse,
+        questionsResponse,
+        coachingSummaryResult,
+      ] = await Promise.allSettled([
         codingService.getAnalytics(),
         behavioralService.getAnalytics(),
         codingService.getSessions(),
         codingService.getQuestions(),
+        dashboardService.getCoachingSummary(),
       ]);
 
-      setAnalytics(analyticsResponse);
-      setBehavioralAnalytics(behavioralAnalyticsResponse);
-      setSessions(sessionsResponse);
-      setQuestions(questionsResponse);
+      if (
+        analyticsResponse.status !== "fulfilled" ||
+        behavioralAnalyticsResponse.status !== "fulfilled" ||
+        sessionsResponse.status !== "fulfilled" ||
+        questionsResponse.status !== "fulfilled"
+      ) {
+        const rejectedResult = [
+          analyticsResponse,
+          behavioralAnalyticsResponse,
+          sessionsResponse,
+          questionsResponse,
+        ].find((result) => result.status === "rejected");
+        throw rejectedResult.reason;
+      }
+
+      setAnalytics(analyticsResponse.value);
+      setBehavioralAnalytics(behavioralAnalyticsResponse.value);
+      setSessions(sessionsResponse.value);
+      setQuestions(questionsResponse.value);
       setStartForm((current) => ({
-        questionId: current.questionId || questionsResponse[0]?.id || "",
+        questionId: current.questionId || questionsResponse.value[0]?.id || "",
         timedMode: current.timedMode ?? false,
         durationMinutes: current.durationMinutes || 30,
       }));
+
+      if (coachingSummaryResult.status === "fulfilled") {
+        setCoachingSummary(coachingSummaryResult.value);
+      } else {
+        setCoachingSummary(null);
+        setCoachingSummaryError(
+          extractApiErrorMessage(
+            coachingSummaryResult.reason,
+            "We couldn't load your combined coaching summary right now.",
+          ),
+        );
+      }
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "We couldn't load your dashboard right now. Please try again."));
     } finally {
@@ -144,6 +182,52 @@ function DashboardPage() {
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="panel p-6 sm:p-7">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-ember-300">Coaching Summary</p>
+            <h2 className="mt-3 text-2xl font-semibold text-white">What PrepForge wants you to work on next</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-400">
+              This combines your latest coding and behavioral outcomes into one practical coaching direction.
+            </p>
+          </div>
+          {coachingSummary?.recommendedSessionType ? (
+            <div className="rounded-2xl border border-ember-500/20 bg-ember-500/10 px-4 py-3 text-sm font-semibold text-ember-200">
+              Focus next: {coachingSummary.recommendedSessionType}
+            </div>
+          ) : null}
+        </div>
+
+        {coachingSummaryError ? (
+          <p className="mt-5 rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-300">{coachingSummaryError}</p>
+        ) : coachingSummary ? (
+          <div className="mt-6 grid gap-5 xl:grid-cols-[1.1fr,0.9fr]">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
+              <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Headline</p>
+              <p className="mt-3 text-lg font-semibold leading-8 text-white">{coachingSummary.headline}</p>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <InsightCard label="Strongest Area" value={coachingSummary.strongestArea} />
+                <InsightCard label="Weakest Area" value={coachingSummary.weakestArea} />
+              </div>
+            </div>
+
+            <div className="grid gap-4">
+              <InsightCard label="Recommended Next Step" value={coachingSummary.recommendedNextStep} />
+              <InsightCard label="Pressure Insight" value={coachingSummary.pressureInsight} />
+              <InsightCard label="Confidence Note" value={coachingSummary.confidenceNote} />
+            </div>
+          </div>
+        ) : (
+          <div className="mt-6">
+            <EmptyState
+              title="Coaching summary warming up"
+              description="Finish a few reviewed coding or behavioral reps and this dashboard block will start pointing you toward the next best practice move."
+            />
+          </div>
+        )}
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
@@ -356,6 +440,15 @@ function DashboardMetric({ label, value }) {
     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
       <p className="text-xs uppercase tracking-[0.25em] text-slate-500">{label}</p>
       <p className="mt-3 text-2xl font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function InsightCard({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <p className="text-xs uppercase tracking-[0.25em] text-slate-500">{label}</p>
+      <p className="mt-3 text-sm leading-7 text-slate-300">{value || "Not enough signal yet."}</p>
     </div>
   );
 }

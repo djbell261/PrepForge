@@ -67,6 +67,9 @@ public class AsyncJob {
     @Column(nullable = false, unique = true, length = 255)
     private String idempotencyKey;
 
+    @Column(length = 100)
+    private String correlationId;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 

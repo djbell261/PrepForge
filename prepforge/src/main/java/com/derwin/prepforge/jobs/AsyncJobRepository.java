@@ -14,6 +14,10 @@ import jakarta.persistence.LockModeType;
 public interface AsyncJobRepository extends JpaRepository<AsyncJob, UUID> {
     Optional<AsyncJob> findByIdempotencyKey(String idempotencyKey);
 
+    long countByStatusIn(Collection<AsyncJobStatus> statuses);
+
+    long countByJobTypeAndStatusIn(AsyncJobType jobType, Collection<AsyncJobStatus> statuses);
+
     Optional<AsyncJob> findTopByAggregateTypeAndAggregateIdAndJobTypeOrderByCreatedAtDesc(
             AsyncJobAggregateType aggregateType,
             UUID aggregateId,

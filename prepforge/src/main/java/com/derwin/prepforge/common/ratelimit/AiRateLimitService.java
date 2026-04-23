@@ -1,5 +1,6 @@
 package com.derwin.prepforge.common.ratelimit;
 
+import com.derwin.prepforge.infrastructure.observability.PrepForgeMetrics;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 public class AiRateLimitService {
     private final StringRedisTemplate stringRedisTemplate;
     private final AiRateLimitProperties aiRateLimitProperties;
+    private final PrepForgeMetrics prepForgeMetrics;
 
     public void checkLimit(UUID userId, AiEndpointCategory endpointCategory) {
         if (!aiRateLimitProperties.isEnabled() || userId == null || endpointCategory == null) {
@@ -42,6 +44,7 @@ public class AiRateLimitService {
             }
 
             if (currentCount > config.getLimit()) {
+                prepForgeMetrics.incrementRateLimitHit(endpointCategory.getKey());
                 throw new AiRateLimitExceededException(endpointCategory, retryAfterSeconds);
             }
         } catch (DataAccessException exception) {

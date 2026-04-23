@@ -5,6 +5,8 @@ import com.derwin.prepforge.behavioral.dto.BehavioralComparisonAnalysisResponse;
 import com.derwin.prepforge.behavioral.dto.BehavioralImproveRequest;
 import com.derwin.prepforge.behavioral.dto.BehavioralImproveResponse;
 import com.derwin.prepforge.behavioral.entity.BehavioralQuestion;
+import com.derwin.prepforge.common.logging.LoggingContext;
+import com.derwin.prepforge.infrastructure.observability.PrepForgeMetrics;
 import com.derwin.prepforge.coding.dto.ApproachImplementationComparisonResponse;
 import com.derwin.prepforge.coding.dto.CodingImprovementResponse;
 import com.derwin.prepforge.coding.dto.CodingStrategyRequest;
@@ -16,8 +18,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpStatus;
@@ -33,6 +37,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@Slf4j
 public class AiService {
 
     private static final String SYSTEM_PROMPT = """
@@ -160,6 +165,7 @@ public class AiService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final PrepForgeMetrics prepForgeMetrics;
     private final String openAiApiKey;
     private final String openAiBaseUrl;
     private final String openAiModel;
@@ -167,6 +173,7 @@ public class AiService {
     public AiService(
             RestTemplateBuilder restTemplateBuilder,
             ObjectMapper objectMapper,
+            PrepForgeMetrics prepForgeMetrics,
             @Value("${openai.api-key}") String openAiApiKey,
             @Value("${openai.base-url:https://api.openai.com/v1}") String openAiBaseUrl,
             @Value("${openai.model:gpt-5-mini}") String openAiModel) {
@@ -178,13 +185,14 @@ public class AiService {
                 .requestFactory(() -> requestFactory)
                 .build();
         this.objectMapper = objectMapper;
+        this.prepForgeMetrics = prepForgeMetrics;
         this.openAiApiKey = openAiApiKey;
         this.openAiBaseUrl = openAiBaseUrl;
         this.openAiModel = openAiModel;
     }
 
     public String generateSubmissionFeedback(CodingQuestion question, CodingSubmission submission) {
-        try {
+        return recordAiCall("coding_feedback", () -> {
             String rawJson = executeStructuredResponse(
                     "coding_feedback",
                     SYSTEM_PROMPT,
@@ -193,15 +201,11 @@ public class AiService {
             FeedbackResult feedback = objectMapper.readValue(rawJson, FeedbackResult.class);
 
             return formatFeedback(feedback);
-        } catch (RestClientException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
-        }
+        });
     }
 
     public CodingImprovementResponse improveSubmissionCode(CodingQuestion question, CodingSubmission submission) {
-        try {
+        return recordAiCall("coding_improvement", () -> {
             String rawJson = executeStructuredResponse(
                     "coding_improvement",
                     IMPROVEMENT_SYSTEM_PROMPT,
@@ -209,15 +213,11 @@ public class AiService {
                     buildImprovementSchema());
 
             return objectMapper.readValue(rawJson, CodingImprovementResponse.class);
-        } catch (RestClientException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
-        }
+        });
     }
 
     public StrategyEvaluationResponse evaluateStrategy(CodingQuestion question, CodingStrategyRequest request) {
-        try {
+        return recordAiCall("strategy_evaluation", () -> {
             String rawJson = executeStructuredResponse(
                     "strategy_evaluation",
                     STRATEGY_EVALUATION_SYSTEM_PROMPT,
@@ -225,18 +225,14 @@ public class AiService {
                     buildStrategyEvaluationSchema());
 
             return objectMapper.readValue(rawJson, StrategyEvaluationResponse.class);
-        } catch (RestClientException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
-        }
+        });
     }
 
     public ApproachImplementationComparisonResponse compareApproachAndImplementation(
             CodingQuestion question,
             CodingSession session,
             CodingSubmission submission) {
-        try {
+        return recordAiCall("approach_implementation_comparison", () -> {
             String rawJson = executeStructuredResponse(
                     "approach_implementation_comparison",
                     APPROACH_COMPARISON_SYSTEM_PROMPT,
@@ -244,18 +240,14 @@ public class AiService {
                     buildApproachComparisonSchema());
 
             return objectMapper.readValue(rawJson, ApproachImplementationComparisonResponse.class);
-        } catch (RestClientException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
-        }
+        });
     }
 
     public BehavioralFeedbackResponse evaluateBehavioralResponse(
             BehavioralQuestion question,
             String previousResponseText,
             String responseText) {
-        try {
+        return recordAiCall("behavioral_feedback", () -> {
             String rawJson = executeStructuredResponse(
                     "behavioral_feedback",
                     BEHAVIORAL_EVALUATION_SYSTEM_PROMPT,
@@ -263,11 +255,7 @@ public class AiService {
                     buildBehavioralFeedbackSchema());
 
             return objectMapper.readValue(rawJson, BehavioralFeedbackResponse.class);
-        } catch (RestClientException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
-        }
+        });
     }
 
     public BehavioralComparisonAnalysisResponse analyzeBehavioralImprovement(
@@ -276,7 +264,7 @@ public class AiService {
             String currentResponseText,
             String previousFeedbackSummary,
             String currentFeedbackSummary) {
-        try {
+        return recordAiCall("behavioral_comparison", () -> {
             String rawJson = executeStructuredResponse(
                     "behavioral_comparison",
                     BEHAVIORAL_COMPARISON_SYSTEM_PROMPT,
@@ -289,15 +277,11 @@ public class AiService {
                     buildBehavioralComparisonSchema());
 
             return objectMapper.readValue(rawJson, BehavioralComparisonAnalysisResponse.class);
-        } catch (RestClientException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
-        }
+        });
     }
 
     public BehavioralImproveResponse improveBehavioralResponse(BehavioralImproveRequest request) {
-        try {
+        return recordAiCall("behavioral_improvement", () -> {
             String rawJson = executeStructuredResponse(
                     "behavioral_improvement",
                     BEHAVIORAL_IMPROVEMENT_SYSTEM_PROMPT,
@@ -305,11 +289,34 @@ public class AiService {
                     buildBehavioralImprovementSchema());
 
             return objectMapper.readValue(rawJson, BehavioralImproveResponse.class);
+        });
+    }
+
+    private <T> T recordAiCall(String category, ThrowingSupplier<T> supplier) {
+        Instant startedAt = Instant.now();
+        prepForgeMetrics.incrementAiRequest(category);
+        try {
+            T result = supplier.get();
+            prepForgeMetrics.recordAiLatency(category, Duration.between(startedAt, Instant.now()));
+            return result;
         } catch (RestClientException exception) {
+            prepForgeMetrics.incrementAiFailure(category);
+            prepForgeMetrics.recordAiLatency(category, Duration.between(startedAt, Instant.now()));
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to call OpenAI API", exception);
         } catch (JsonProcessingException exception) {
+            prepForgeMetrics.incrementAiFailure(category);
+            prepForgeMetrics.recordAiLatency(category, Duration.between(startedAt, Instant.now()));
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Failed to parse OpenAI response", exception);
+        } catch (RuntimeException exception) {
+            prepForgeMetrics.incrementAiFailure(category);
+            prepForgeMetrics.recordAiLatency(category, Duration.between(startedAt, Instant.now()));
+            throw exception;
         }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingSupplier<T> {
+        T get() throws JsonProcessingException;
     }
 
     private String buildEvaluationPrompt(CodingQuestion question, CodingSubmission submission) {
@@ -700,10 +707,39 @@ public class AiService {
                                 "strict", true,
                                 "schema", schema)));
 
-        ResponseEntity<JsonNode> response = restTemplate.postForEntity(
-                openAiBaseUrl + "/responses",
-                new HttpEntity<>(requestBody, headers),
-                JsonNode.class);
+        Instant startedAt = Instant.now();
+        log.info(
+                "ai_provider_call_start schemaName={} model={} correlationId={}",
+                schemaName,
+                openAiModel,
+                LoggingContext.getCorrelationId());
+
+        ResponseEntity<JsonNode> response;
+        try {
+            response = restTemplate.postForEntity(
+                    openAiBaseUrl + "/responses",
+                    new HttpEntity<>(requestBody, headers),
+                    JsonNode.class);
+        } catch (RestClientException exception) {
+            long durationMs = Duration.between(startedAt, Instant.now()).toMillis();
+            log.warn(
+                    "ai_provider_call_failed schemaName={} model={} durationMs={} correlationId={}",
+                    schemaName,
+                    openAiModel,
+                    durationMs,
+                    LoggingContext.getCorrelationId(),
+                    exception);
+            throw exception;
+        }
+
+        long durationMs = Duration.between(startedAt, Instant.now()).toMillis();
+        log.info(
+                "ai_provider_call_end schemaName={} model={} durationMs={} statusCode={} correlationId={}",
+                schemaName,
+                openAiModel,
+                durationMs,
+                response.getStatusCode().value(),
+                LoggingContext.getCorrelationId());
 
         JsonNode body = response.getBody();
         if (body == null) {

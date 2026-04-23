@@ -60,6 +60,7 @@ public class AnalyticsCacheService {
     public void evictAllAnalytics(UUID userId) {
         evict(userId, AnalyticsCacheType.CODING_SUMMARY);
         evict(userId, AnalyticsCacheType.BEHAVIORAL_SUMMARY);
+        evict(userId, AnalyticsCacheType.DASHBOARD_COACHING_SUMMARY);
     }
 
     private void put(UUID userId, AnalyticsCacheType cacheType, Object value) {

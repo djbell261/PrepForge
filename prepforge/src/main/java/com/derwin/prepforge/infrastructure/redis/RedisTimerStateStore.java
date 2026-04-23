@@ -1,5 +1,6 @@
 package com.derwin.prepforge.infrastructure.redis;
 
+import com.derwin.prepforge.infrastructure.observability.PrepForgeMetrics;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
@@ -21,6 +22,7 @@ public class RedisTimerStateStore implements TimerStateStore {
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
     private final TimerStateProperties timerStateProperties;
+    private final PrepForgeMetrics prepForgeMetrics;
 
     @Override
     public void save(TimerState timerState) {
@@ -49,15 +51,19 @@ public class RedisTimerStateStore implements TimerStateStore {
         try {
             String payload = stringRedisTemplate.opsForValue().get(buildKey(sessionId, sessionType));
             if (payload == null || payload.isBlank()) {
+                prepForgeMetrics.incrementTimerLookup(sessionType.name(), "miss");
                 return Optional.empty();
             }
 
+            prepForgeMetrics.incrementTimerLookup(sessionType.name(), "hit");
             return Optional.of(objectMapper.readValue(payload, TimerState.class));
         } catch (JsonProcessingException exception) {
             log.warn("Failed to deserialize timer state for session {}", sessionId, exception);
+            prepForgeMetrics.incrementTimerLookup(sessionType.name(), "error");
             return Optional.empty();
         } catch (DataAccessException exception) {
             log.warn("Redis unavailable while reading timer projection for session {}", sessionId, exception);
+            prepForgeMetrics.incrementTimerLookup(sessionType.name(), "redis_unavailable");
             return Optional.empty();
         }
     }

@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -34,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class SessionSummaryService {
     private final SessionSummaryRepository sessionSummaryRepository;
@@ -122,6 +124,14 @@ public class SessionSummaryService {
                 .updatedAt(now)
                 .build());
 
+        log.info(
+                "session_summary_generated sessionType={} sessionId={} userId={} strengthsCount={} weaknessesCount={} nextStepsCount={}",
+                SessionSummaryType.CODING,
+                session.getId(),
+                session.getUserId(),
+                readList(sessionSummary.getStrengthsJson()).size(),
+                readList(sessionSummary.getWeaknessesJson()).size(),
+                readList(sessionSummary.getNextStepsJson()).size());
         return mapResponse(sessionSummary);
     }
 
@@ -177,6 +187,14 @@ public class SessionSummaryService {
                 .updatedAt(now)
                 .build());
 
+        log.info(
+                "session_summary_generated sessionType={} sessionId={} userId={} strengthsCount={} weaknessesCount={} nextStepsCount={}",
+                SessionSummaryType.BEHAVIORAL,
+                session.getId(),
+                session.getUserId(),
+                readList(sessionSummary.getStrengthsJson()).size(),
+                readList(sessionSummary.getWeaknessesJson()).size(),
+                readList(sessionSummary.getNextStepsJson()).size());
         return mapResponse(sessionSummary);
     }
 
